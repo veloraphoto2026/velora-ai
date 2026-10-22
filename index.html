@@ -310,14 +310,86 @@ photo.addEventListener("change", () => {
   status.textContent = "Фотография загружена. Выбери стиль.";
 });
 
-document.getElementById("generate").addEventListener("click", () => {
+document.getElementById("generate").addEventListener("click", async () => {
+  const button = document.getElementById("generate");
+  const key = document.getElementById("testKey").value.trim();
+
   if (!photo.files.length) {
-    status.textContent = "Сначала загрузи фотографию.";
+    status.textContent = "Сначала загрузи фотографию";
     return;
   }
 
-  status.textContent =
-    "Интерфейс готов! Следующий шаг — безопасное подключение ИИ.";
+  if (!key) {
+    status.textContent = "Введи тестовый ключ";
+    return;
+  }
+
+  const file = photo.files[0];
+
+  if (!["image/jpeg", "image/png"].includes(file.type)) {
+    status.textContent = "Выбери JPEG или PNG";
+    return;
+  }
+
+  if (file.size > 8 * 1024 * 1024) {
+    status.textContent = "Фотография слишком большая (максимум 8 МБ)";
+    return;
+  }
+
+  button.disabled = true;
+  status.textContent = "✨ Создаём фотографию. Подожди немного...";
+
+  try {
+    const image = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error("Ошибка чтения фото"));
+      reader.readAsDataURL(file);
+    });
+
+    const wishes = document.getElementById("prompt").value.trim();
+
+    const description =
+      mode.value === "cartoon"
+        ? "Transform the person into a high-quality cartoon character."
+        : "Create a photorealistic professional photoshoot.";
+
+    const fullPrompt = [
+      description,
+      "Style: " + style.value,
+      wishes,
+      "Preserve the person's facial identity and recognizable features."
+    ].filter(Boolean).join(" ");
+
+    const response = await fetch("/api/generate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-velora-key": key
+      },
+      body: JSON.stringify({
+        image,
+        prompt: fullPrompt
+      })
+    });
+
+    const result = await response.json();
+
+    if (!response.ok || !result.success || !result.image) {
+      throw new Error(result.error || "Ошибка генерации");
+    }
+
+    const output = document.getElementById("result");
+    output.src = result.image;
+    output.style.display = "block";
+
+    status.textContent = "✅ Фотография готова!";
+
+  } catch (error) {
+    status.textContent = "Ошибка: " + error.message;
+  } finally {
+    button.disabled = false;
+  }
 });
 
 document.getElementById("download").addEventListener("click", () => {
