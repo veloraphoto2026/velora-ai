@@ -1,3 +1,323 @@
-<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#0b0b0e"><title>Velora AI — ИИ-фотостудия</title><style>
-:root{--gold:#d9b76e;--bg:#0b0b0e;--panel:#19191d}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:#f6f0e5;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}a{color:inherit;text-decoration:none}header{display:flex;align-items:center;justify-content:space-between;padding:23px 6%;border-bottom:1px solid #29251f}.logo{font-size:23px;letter-spacing:.16em;font-weight:700}.logo span{color:var(--gold)}nav{display:flex;gap:20px;font-size:13px}nav a:hover{color:var(--gold)}.hero{min-height:580px;display:grid;place-items:center;text-align:center;padding:75px 20px;background:radial-gradient(ellipse at 50% 40%,#3a2d1d 0%,#151316 44%,#0b0b0e 78%)}.eyebrow{color:var(--gold);text-transform:uppercase;letter-spacing:.25em;font-size:12px}.hero h1{font-family:Georgia,serif;font-size:clamp(44px,9vw,92px);line-height:1.05;margin:20px 0;max-width:950px;font-weight:400}.hero h1 em{color:var(--gold);font-style:normal}.hero p{color:#bdb6ae;line-height:1.7;max-width:550px;margin:0 auto 28px}.btn{display:inline-block;background:linear-gradient(120deg,#b68b43,#f1d594);color:#15100a;border:0;border-radius:6px;padding:16px 28px;font-weight:700;cursor:pointer}.ghost{background:transparent;border:1px solid #6f5a36;color:var(--gold)}.actions{display:flex;justify-content:center;gap:12px;flex-wrap:wrap}.note{font-size:12px;color:#9d9588;margin-top:17px}.wrap{max-width:1120px;margin:auto;padding:75px 22px}h2{font-family:Georgia,serif;font-size:clamp(32px,5vw,52px);font-weight:400;margin:12px 0 28px}.muted{color:#a8a19a;line-height:1.7}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}.card{background:linear-gradient(150deg,#27211b,#17171b 65%);border:1px solid #423725;border-radius:14px;padding:30px;min-height:220px;display:flex;flex-direction:column;justify-content:end}.card strong{font-size:24px;font-family:Georgia,serif;font-weight:400}.card small{color:#c3b8a5;margin-top:9px}.price{font-size:34px;color:var(--gold);margin:16px 0}.tag{color:var(--gold);font-size:12px;letter-spacing:.13em;text-transform:uppercase}.upload{border:1px dashed #826b45;border-radius:14px;padding:35px;text-align:center;background:#171619}.upload input{max-width:100%;margin:18px auto;color:#ddd}.status{font-size:13px;color:#d9b76e;min-height:20px}footer{text-align:center;padding:40px 20px;border-top:1px solid #2e2923;color:#938a80;font-size:13px}@media(max-width:680px){nav{gap:10px;font-size:11px}.logo{font-size:17px}.grid{grid-template-columns:1fr}.wrap{padding:55px 18px}.hero{min-height:530px}}
-</style></head><body><header><a href="#" class="logo">VELORA <span>AI</span></a><nav><a href="#styles">Образы</a><a href="#studio">Студия</a><a href="#prices">Тарифы</a></nav></header><main><section class="hero"><div><div class="eyebrow">Ваш новый взгляд на себя</div><h1>Фотосессия мечты.<br><em>Без фотостудии.</em></h1><p>Создавайте вдохновляющие образы с помощью искусственного интеллекта. Ваша фотография — начало новой истории.</p><div class="actions"><a class="btn" href="#studio">Попробовать бесплатно</a><a class="btn ghost" href="#styles">Смотреть образы</a></div><div class="note">2 бесплатные генерации — после запуска сервиса</div></div></section><section class="wrap" id="styles"><div class="tag">Коллекция образов</div><h2>Какой образ выберете вы?</h2><div class="grid"><div class="card"><strong>Деловой стиль</strong><small>Уверенность в каждом кадре</small></div><div class="card"><strong>Fashion</strong><small>Как на обложке журнала</small></div><div class="card"><strong>Путешествия</strong><small>Новые места и впечатления</small></div><div class="card"><strong>Романтика</strong><small>Тёплые моменты</small></div><div class="card"><strong>Кинопортрет</strong><small>Атмосфера большого кино</small></div><div class="card"><strong>Luxury</strong><small>Элегантность вне времени</small></div></div></section><section class="wrap" id="studio"><div class="tag">Ваша ИИ-студия</div><h2>Начните с фотографии</h2><p class="muted">Здесь можно проверить выбор файла. В демонстрационной версии фотография никуда не отправляется, а генерация пока недоступна.</p><div class="upload"><label for="photo">Выберите фото с телефона</label><br><input type="file" id="photo" accept="image/*"><p id="fileStatus" class="status">Файл не выбран</p><button class="btn" type="button" id="demoBtn">Создать фотосессию</button><p id="demoStatus" class="muted"></p></div></section><section class="wrap" id="prices"><div class="tag">Будущие тарифы</div><h2>Красивые кадры для каждого</h2><p class="muted">Цены ниже — пример оформления, не действующее предложение.</p><div class="grid"><div class="card"><div class="tag">Знакомство</div><strong>Бесплатно</strong><div class="price">0 ₽</div><small>2 генерации после регистрации — после запуска</small></div><div class="card"><div class="tag">Популярный</div><strong>Мини</strong><div class="price">299 ₽</div><small>Демонстрационный тариф · 10 генераций</small></div><div class="card"><div class="tag">Премиум</div><strong>Студия</strong><div class="price">799 ₽</div><small>Демонстрационный тариф · 30 генераций</small></div></div></section></main><footer>© 2026 VELORA AI · Демонстрационная версия · Генерация и оплата пока не подключены</footer><script>document.getElementById('photo').addEventListener('change',e=>{const f=e.target.files[0];document.getElementById('fileStatus').textContent=f?'Выбрано: '+f.name:'Файл не выбран'});document.getElementById('demoBtn').addEventListener('click',()=>document.getElementById('demoStatus').textContent='Это демонстрация. ИИ-генерация будет подключена на следующем этапе.');</script></body></html>
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0b0b0e">
+
+<title>Velora AI — ИИ-фотостудия</title>
+
+<style>
+:root {
+  --gold:#d9b76e;
+  --bg:#0b0b0e;
+  --panel:#19191d;
+}
+
+* {box-sizing:border-box}
+
+body {
+  margin:0;
+  background:var(--bg);
+  color:#f6f0e5;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+}
+
+header {
+  padding:24px;
+  text-align:center;
+  border-bottom:1px solid #29251f;
+}
+
+.logo {
+  font-size:27px;
+  font-weight:700;
+  letter-spacing:5px;
+}
+
+.logo span {color:var(--gold)}
+
+.hero {
+  text-align:center;
+  padding:65px 20px;
+  background:radial-gradient(circle,#382b1d,#0b0b0e 75%);
+}
+
+.hero h1 {
+  font-family:Georgia,serif;
+  font-size:clamp(38px,8vw,65px);
+  font-weight:400;
+}
+
+.hero em {
+  color:var(--gold);
+  font-style:normal;
+}
+
+.hero p {
+  color:#bbb;
+  line-height:1.7;
+}
+
+.container {
+  max-width:850px;
+  margin:auto;
+  padding:35px 20px;
+}
+
+h2 {
+  font-family:Georgia,serif;
+  font-size:34px;
+  font-weight:400;
+}
+
+.panel {
+  background:var(--panel);
+  border:1px solid #514027;
+  border-radius:15px;
+  padding:25px;
+  margin-bottom:25px;
+}
+
+label {
+  display:block;
+  margin:20px 0 10px;
+  color:var(--gold);
+}
+
+select,textarea,input {
+  width:100%;
+  padding:14px;
+  background:#101014;
+  border:1px solid #665334;
+  border-radius:8px;
+  color:white;
+  font-size:16px;
+}
+
+textarea {
+  min-height:110px;
+  resize:vertical;
+}
+
+button {
+  width:100%;
+  padding:17px;
+  margin-top:20px;
+  border:0;
+  border-radius:8px;
+  background:linear-gradient(120deg,#b68b43,#f1d594);
+  color:#15100a;
+  font-size:16px;
+  font-weight:700;
+  cursor:pointer;
+}
+
+button:disabled {
+  opacity:.55;
+  cursor:not-allowed;
+}
+
+.preview {
+  width:100%;
+  max-height:450px;
+  object-fit:contain;
+  margin-top:20px;
+  border-radius:10px;
+  display:none;
+}
+
+.status {
+  margin-top:20px;
+  color:var(--gold);
+  text-align:center;
+  line-height:1.6;
+}
+
+.note {
+  color:#aaa;
+  font-size:13px;
+  line-height:1.6;
+}
+
+footer {
+  text-align:center;
+  padding:35px;
+  color:#999;
+  font-size:13px;
+}
+</style>
+</head>
+
+<body>
+
+<header>
+  <div class="logo">VELORA <span>AI</span></div>
+</header>
+
+<section class="hero">
+  <h1>Твоя фотосессия.<br><em>Твои правила.</em></h1>
+  <p>
+    Создавай реалистичные фотографии и мультяшные образы
+    с помощью искусственного интеллекта.
+  </p>
+</section>
+
+<main class="container">
+
+<h2>ИИ-фотостудия</h2>
+
+<div class="panel">
+
+<label for="photo">📸 Загрузи фотографию</label>
+<input type="file" id="photo" accept="image/jpeg,image/png">
+
+<img id="preview" class="preview" alt="Исходная фотография">
+
+<label for="mode">✨ Выбери режим</label>
+
+<select id="mode">
+  <option value="real">Реалистичная фотосессия</option>
+  <option value="cartoon">Мультяшная обработка</option>
+</select>
+
+<label for="style">🎨 Выбери стиль</label>
+
+<select id="style"></select>
+
+<label for="prompt">📝 Твои пожелания</label>
+
+<textarea id="prompt"
+placeholder="Например: красивое вечернее платье, Париж, мягкий свет"></textarea>
+
+<button id="generate" type="button">
+  ✨ Создать фотографию
+</button>
+
+<p class="note">
+  Тестовая версия. Генерация пока не подключена к интерфейсу.
+  Загруженная фотография остаётся в браузере.
+</p>
+
+<div id="status" class="status" role="status" aria-live="polite"></div>
+
+</div>
+
+<div class="panel">
+
+<h2>Результат</h2>
+
+<p class="note">
+  Здесь появится твоя новая фотография.
+</p>
+
+<img id="result" class="preview" alt="Результат генерации">
+
+<button id="download" type="button" style="display:none">
+  📥 Сохранить фотографию
+</button>
+
+</div>
+
+</main>
+
+<footer>
+© 2026 VELORA AI · Тестовая версия
+</footer>
+
+<script>
+
+const styles = {
+  real: [
+    "Деловая фотосессия",
+    "Fashion",
+    "Путешествия",
+    "Романтика",
+    "Кинопортрет",
+    "Luxury"
+  ],
+  cartoon: [
+    "Disney-подобная 3D-анимация",
+    "Аниме",
+    "Мультяшный 3D-портрет",
+    "Рисованная иллюстрация",
+    "Сказочный персонаж",
+    "Романтический мультфильм"
+  ]
+};
+
+const photo = document.getElementById("photo");
+const mode = document.getElementById("mode");
+const style = document.getElementById("style");
+const preview = document.getElementById("preview");
+const status = document.getElementById("status");
+
+let previewUrl = null;
+
+function updateStyles() {
+  style.innerHTML = "";
+
+  styles[mode.value].forEach(item => {
+    const option = document.createElement("option");
+    option.value = item;
+    option.textContent = item;
+    style.appendChild(option);
+  });
+}
+
+mode.addEventListener("change", updateStyles);
+updateStyles();
+
+photo.addEventListener("change", () => {
+  const file = photo.files[0];
+
+  if (previewUrl) {
+    URL.revokeObjectURL(previewUrl);
+    previewUrl = null;
+  }
+
+  preview.style.display = "none";
+  preview.removeAttribute("src");
+
+  if (!file) {
+    status.textContent = "";
+    return;
+  }
+
+  if (!["image/jpeg", "image/png"].includes(file.type)) {
+    status.textContent = "Выбери фотографию JPEG или PNG.";
+    photo.value = "";
+    return;
+  }
+
+  if (file.size > 8 * 1024 * 1024) {
+    status.textContent = "Фотография слишком большая. Максимум 8 МБ.";
+    photo.value = "";
+    return;
+  }
+
+  previewUrl = URL.createObjectURL(file);
+  preview.src = previewUrl;
+  preview.style.display = "block";
+
+  status.textContent = "Фотография загружена. Выбери стиль.";
+});
+
+document.getElementById("generate").addEventListener("click", () => {
+  if (!photo.files.length) {
+    status.textContent = "Сначала загрузи фотографию.";
+    return;
+  }
+
+  status.textContent =
+    "Интерфейс готов! Следующий шаг — безопасное подключение ИИ.";
+});
+
+document.getElementById("download").addEventListener("click", () => {
+  status.textContent = "Сохранение станет доступно после подключения ИИ.";
+});
+
+</script>
+
+</body>
+</html>
