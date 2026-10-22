@@ -11,10 +11,10 @@ const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN
 });
 
+const path = require("path");
+
 app.get("/", (req, res) => {
-  res.json({
-    message: "Velora AI server is running"
-  });
+  res.sendFile(path.join(__dirname, "index.html"));
 });
 
 app.post("/api/generate", async (req, res) => {
