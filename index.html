@@ -245,6 +245,9 @@ placeholder="Например: красивое вечернее платье, �
 </footer>
 
 <script>
+const API_BASE = "https://velora-ai-api-4rra.onrender.com";
+function apiUrl(path) { return API_BASE + path; }
+
 
 const styles = {
   real: [
@@ -283,7 +286,7 @@ async function refreshAccount() {
     return;
   }
   try {
-    const r = await fetch("/api/me", {headers:{Authorization:"Bearer "+sessionToken}});
+    const r = await fetch(apiUrl("/api/me"), {headers:{Authorization:"Bearer "+sessionToken}});
     if (!r.ok) throw new Error("Сессия истекла");
     const data = await r.json();
     document.getElementById("accountInfo").textContent = data.user.email + " · Осталось генераций: " + data.user.credits;
@@ -296,7 +299,7 @@ async function refreshAccount() {
 async function authenticateAccount(action) {
   authStatus.textContent = "Подождите...";
   try {
-    const response = await fetch("/api/"+action, {method:"POST",
+    const response = await fetch(apiUrl("/api/"+action), {method:"POST",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({email:document.getElementById("email").value,
         password:document.getElementById("password").value})});
@@ -417,7 +420,7 @@ document.getElementById("generate").addEventListener("click", async () => {
       "Preserve the person's facial identity and recognizable features."
     ].filter(Boolean).join(" ");
 
-    const response = await fetch("/api/generate", {
+    const response = await fetch(apiUrl("/api/generate"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
