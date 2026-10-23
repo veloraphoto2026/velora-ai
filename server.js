@@ -1,6 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const Replicate = require("replicate");
+const { Pool } = require("pg");
 
 const app = express();
 
@@ -12,6 +13,9 @@ const replicate = new Replicate({
 });
 
 const path = require("path");
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL
+});
 
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
