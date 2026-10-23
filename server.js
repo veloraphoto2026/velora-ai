@@ -357,8 +357,12 @@ app.post("/api/generate", async (req, res) => {
     reservedUserId = null;
     let credits = null;
     if (userId) {
-      const balance = await pool.query("SELECT credits FROM users WHERE id = $1", [userId]);
-      credits = balance.rows[0]?.credits ?? null;
+      try {
+        const balance = await pool.query("SELECT credits FROM users WHERE id = $1", [userId]);
+        credits = balance.rows[0]?.credits ?? null;
+      } catch (balanceError) {
+        console.error("Balance read failed after successful generation:", balanceError);
+      }
     }
     return res.json({success:true,image:imageUrl,credits});
   } catch (error) {
