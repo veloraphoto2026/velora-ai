@@ -8,8 +8,18 @@ const path = require("path");
 
 const app = express();
 
-app.use(cors());
+const allowedOrigins = (process.env.ALLOWED_ORIGIN || "https://velora-ai-wyp6.onrender.com")
+  .split(",").map(origin => origin.trim()).filter(Boolean);
+app.use(cors({ origin(origin, callback) {
+  if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+  return callback(null, false);
+} }));
 app.use(express.json({ limit: "15mb" }));
+app.disable("x-powered-by");
+
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+  console.warn("JWT_SECRET is missing or too short: authentication will be unavailable");
+}
 
 const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN
@@ -17,11 +27,12 @@ const replicate = new Replicate({
 
 // DATABASE
 
+// Render internal PostgreSQL connections generally do not require TLS.
+// For external PostgreSQL, set DATABASE_SSL=true and provide a trusted CA.
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL
-    ? { rejectUnauthorized: false }
-    : undefined
+  ssl: process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: true } : undefined,
+  connectionTimeoutMillis: 5000
 });
 
 // CREATE USERS TABLE
@@ -65,6 +76,31 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+// Public readiness check: does not expose credentials or configuration values.
+app.get("/api/ready", async (req, res) => {
+  const authReady = Boolean(process.env.JWT_SECRET && process.env.JWT_SECRET.length >= 32);
+  const generationReady = Boolean(process.env.REPLICATE_API_TOKEN);
+  let databaseReady = false;
+  if (process.env.DATABASE_URL) {
+    try {
+      await pool.query("SELECT 1 FROM users LIMIT 0");
+      databaseReady = true;
+    } catch (error) {
+      console.error("Readiness database check failed:", error.message);
+    }
+  }
+  const ready = authReady && generationReady && databaseReady;
+  res.status(ready ? 200 : 503).json({
+    success: ready,
+    service: "Velora AI",
+    components: {
+      database: databaseReady ? "ready" : "unavailable",
+      authentication: authReady ? "ready" : "unavailable",
+      generation: generationReady ? "configured" : "unavailable"
+    }
+  });
+});
+
 // REGISTER
 
 app.post("/api/register", async (req, res) => {
@@ -85,6 +121,7 @@ app.post("/api/register", async (req, res) => {
     }
 
     const normalizedEmail = email.trim().toLowerCase();
+    if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) return res.status(503).json({success:false,error:"Авторизация пока не настроена"});
 
     const existing = await pool.query(
       "SELECT id FROM users WHERE email = $1",
@@ -123,6 +160,9 @@ app.post("/api/register", async (req, res) => {
 
   } catch (error) {
     console.error("Register error:", error);
+    if (error.code === "23505") {
+      return res.status(409).json({ success: false, error: "Этот email уже зарегистрирован" });
+    }
 
     res.status(500).json({
       success: false,
@@ -146,6 +186,8 @@ app.post("/api/login", async (req, res) => {
         error: "Введите email и пароль"
       });
     }
+
+    if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) return res.status(503).json({success:false,error:"Авторизация пока не настроена"});
 
     const result = await pool.query(
       "SELECT * FROM users WHERE email = $1",
@@ -270,86 +312,70 @@ app.get("/api/me", authenticate, async (req, res) => {
 // Existing test access remains available.
 
 app.post("/api/generate", async (req, res) => {
+  let reservedUserId = null;
   try {
-    const secret = process.env.VELORA_TEST_KEY;
-
-    if (!secret) {
-      return res.status(503).json({
-        success: false,
-        error: "Тестовый доступ не настроен"
-      });
-    }
-
-    const providedKey = req.get("x-velora-key");
-
-    if (providedKey !== secret) {
-      return res.status(401).json({
-        success: false,
-        error: "Неверный тестовый ключ"
-      });
-    }
-
-    const { image, prompt } = req.body || {};
-
-    if (
-      typeof image !== "string" ||
-      !(
-        image.startsWith("data:image/jpeg;base64,") ||
-        image.startsWith("data:image/png;base64,")
-      )
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: "Необходима фотография JPEG или PNG"
-      });
-    }
-
-    if (
-      typeof prompt !== "string" ||
-      !prompt.trim() ||
-      prompt.length > 1500
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: "Некорректное описание фотографии"
-      });
-    }
-
-    const output = await replicate.run(
-      "black-forest-labs/flux-kontext-pro",
-      {
-        input: {
-          prompt: prompt.trim(),
-          input_image: image,
-          output_format: "jpg",
-          aspect_ratio: "match_input_image"
-        }
+    const auth = req.get("authorization") || "";
+    const bearer = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+    const testKey = req.get("x-velora-key");
+    const testAccess = Boolean(process.env.VELORA_TEST_KEY && testKey &&
+      testKey.length === process.env.VELORA_TEST_KEY.length &&
+      require("crypto").timingSafeEqual(Buffer.from(testKey), Buffer.from(process.env.VELORA_TEST_KEY)));
+    let userId = null;
+    if (bearer) {
+      if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+        return res.status(503).json({success:false,error:"Авторизация не настроена"});
       }
-    );
-
-    const imageUrl =
-      typeof output === "string"
-        ? output
-        : typeof output?.url === "function"
-          ? output.url()
-          : null;
-
-    if (!imageUrl) {
-      throw new Error("No image URL returned");
+      try { userId = jwt.verify(bearer, process.env.JWT_SECRET).userId; }
+      catch { return res.status(401).json({success:false,error:"Войдите в аккаунт повторно"}); }
+    } else if (!testAccess) {
+      return res.status(401).json({success:false,error:"Войдите в аккаунт"});
     }
-
-    res.json({
-      success: true,
-      image: imageUrl
+    const { image, prompt } = req.body || {};
+    if (typeof image !== "string" ||
+        !/^data:image\/(jpeg|png);base64,[A-Za-z0-9+/=]+$/.test(image) ||
+        image.length > 11 * 1024 * 1024) {
+      return res.status(400).json({success:false,error:"Загрузите JPEG или PNG до 8 МБ"});
+    }
+    if (typeof prompt !== "string" || !prompt.trim() || prompt.length > 1500) {
+      return res.status(400).json({success:false,error:"Некорректное описание"});
+    }
+    if (!process.env.REPLICATE_API_TOKEN) {
+      return res.status(503).json({success:false,error:"Генерация пока не настроена"});
+    }
+    if (userId) {
+      const debit = await pool.query(
+        "UPDATE users SET credits = credits - 1 WHERE id = $1 AND credits > 0 RETURNING id",
+        [userId]
+      );
+      if (!debit.rows.length) return res.status(402).json({success:false,error:"Бесплатные генерации закончились"});
+      reservedUserId = userId;
+    }
+    const output = await replicate.run("black-forest-labs/flux-kontext-pro", {
+      input: { prompt: prompt.trim(), input_image: image,
+        output_format: "jpg", aspect_ratio: "match_input_image" }
     });
-
+    const imageUrl = typeof output === "string" ? output :
+      typeof output?.url === "function" ? output.url() :
+      Array.isArray(output) ? output[0] : null;
+    if (!imageUrl) throw new Error("No image URL returned");
+    reservedUserId = null;
+    let credits = null;
+    if (userId) {
+      try {
+        const balance = await pool.query("SELECT credits FROM users WHERE id = $1", [userId]);
+        credits = balance.rows[0]?.credits ?? null;
+      } catch (balanceError) {
+        console.error("Balance read failed after successful generation:", balanceError);
+      }
+    }
+    return res.json({success:true,image:imageUrl,credits});
   } catch (error) {
     console.error("Generation error:", error);
-
-    res.status(500).json({
-      success: false,
-      error: "Ошибка генерации фотографии"
-    });
+    if (reservedUserId) {
+      try { await pool.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [reservedUserId]); }
+      catch (refundError) { console.error("Credit refund failed:", refundError); }
+    }
+    return res.status(500).json({success:false,error:"Ошибка генерации фотографии. Попробуйте ещё раз"});
   }
 });
 

@@ -167,6 +167,18 @@ footer {
 
 <h2>ИИ-фотостудия</h2>
 
+<div class="panel" id="accountPanel">
+<h2>Личный кабинет</h2>
+<p id="accountInfo" class="note">Зарегистрируйтесь и получите 2 бесплатные генерации.</p>
+<div id="authForm">
+<label for="email">Email</label><input id="email" type="email" autocomplete="email">
+<label for="password">Пароль (минимум 8 символов)</label><input id="password" type="password" autocomplete="current-password">
+<button id="register" type="button">Зарегистрироваться</button>
+<button id="login" type="button">Войти</button>
+</div>
+<button id="logout" type="button" style="display:none">Выйти</button>
+<p id="authStatus" class="status" role="status"></p>
+</div>
 <div class="panel">
 
 <label for="photo">📸 Загрузи фотографию</label>
@@ -190,7 +202,7 @@ footer {
 <textarea id="prompt"
 placeholder="Например: красивое вечернее платье, Париж, мягкий свет"></textarea>
 
-<label for="testKey">🔐 Тестовый доступ</label>
+<label for="testKey">🔐 Тестовый ключ (только для администратора)</label>
 <input
   type="password"
   id="testKey"
@@ -202,7 +214,7 @@ placeholder="Например: красивое вечернее платье, �
 </button>
 
 <p class="note">
-  Тестовая версия. Генерация пока не подключена к интерфейсу.
+  После регистрации доступны две бесплатные генерации.
   Загруженная фотография остаётся в браузере.
 </p>
 
@@ -233,6 +245,9 @@ placeholder="Например: красивое вечернее платье, �
 </footer>
 
 <script>
+const API_BASE = "https://velora-ai-api-4rra.onrender.com";
+function apiUrl(path) { return API_BASE + path; }
+
 
 const styles = {
   real: [
@@ -260,6 +275,50 @@ const preview = document.getElementById("preview");
 const status = document.getElementById("status");
 
 let previewUrl = null;
+let sessionToken = sessionStorage.getItem("veloraToken") || "";
+const authStatus = document.getElementById("authStatus");
+async function refreshAccount() {
+  const loggedIn = Boolean(sessionToken);
+  document.getElementById("authForm").style.display = loggedIn ? "none" : "block";
+  document.getElementById("logout").style.display = loggedIn ? "block" : "none";
+  if (!loggedIn) {
+    document.getElementById("accountInfo").textContent = "Зарегистрируйтесь и получите 2 бесплатные генерации.";
+    return;
+  }
+  try {
+    const r = await fetch(apiUrl("/api/me"), {headers:{Authorization:"Bearer "+sessionToken}});
+    if (!r.ok) throw new Error("Сессия истекла");
+    const data = await r.json();
+    document.getElementById("accountInfo").textContent = data.user.email + " · Осталось генераций: " + data.user.credits;
+  } catch(e) {
+    sessionToken = ""; sessionStorage.removeItem("veloraToken");
+    authStatus.textContent = e.message;
+    refreshAccount();
+  }
+}
+async function authenticateAccount(action) {
+  authStatus.textContent = "Подождите...";
+  try {
+    const response = await fetch(apiUrl("/api/"+action), {method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({email:document.getElementById("email").value,
+        password:document.getElementById("password").value})});
+    const data = await response.json();
+    if (!response.ok || !data.token) throw new Error(data.error || "Ошибка входа");
+    sessionToken = data.token;
+    sessionStorage.setItem("veloraToken",sessionToken);
+    document.getElementById("password").value = "";
+    authStatus.textContent = "Готово!";
+    await refreshAccount();
+  } catch(e) {authStatus.textContent=e.message;}
+}
+document.getElementById("register").onclick=()=>authenticateAccount("register");
+document.getElementById("login").onclick=()=>authenticateAccount("login");
+document.getElementById("logout").onclick=()=>{
+  sessionToken="";sessionStorage.removeItem("veloraToken");
+  authStatus.textContent="Вы вышли из аккаунта";refreshAccount();
+};
+refreshAccount();
 
 function updateStyles() {
   style.innerHTML = "";
@@ -319,8 +378,8 @@ document.getElementById("generate").addEventListener("click", async () => {
     return;
   }
 
-  if (!key) {
-    status.textContent = "Введи тестовый ключ";
+  if (!key && !sessionToken) {
+    status.textContent = "Сначала войди в аккаунт";
     return;
   }
 
@@ -361,11 +420,11 @@ document.getElementById("generate").addEventListener("click", async () => {
       "Preserve the person's facial identity and recognizable features."
     ].filter(Boolean).join(" ");
 
-    const response = await fetch("/api/generate", {
+    const response = await fetch(apiUrl("/api/generate"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-velora-key": key
+        ...(sessionToken ? {"Authorization": "Bearer " + sessionToken} : {"x-velora-key": key})
       },
       body: JSON.stringify({
         image,
@@ -384,6 +443,8 @@ document.getElementById("generate").addEventListener("click", async () => {
     output.style.display = "block";
 
     status.textContent = "✅ Фотография готова!";
+    document.getElementById("download").style.display = "block";
+    refreshAccount();
 
   } catch (error) {
     status.textContent = "Ошибка: " + error.message;
@@ -393,7 +454,8 @@ document.getElementById("generate").addEventListener("click", async () => {
 });
 
 document.getElementById("download").addEventListener("click", () => {
-  status.textContent = "Сохранение станет доступно после подключения ИИ.";
+  const src = document.getElementById("result").src;
+  if (src) window.open(src, "_blank", "noopener,noreferrer");
 });
 
 </script>
