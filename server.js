@@ -2,6 +2,8 @@ const express = require("express");
 const cors = require("cors");
 const Replicate = require("replicate");
 const { Pool } = require("pg");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
 const path = require("path");
 
 const app = express();
@@ -9,29 +11,47 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "15mb" }));
 
-// Replicate AI
 const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN
 });
 
-// Database
-let pool = null;
+// DATABASE
 
-if (process.env.DATABASE_URL) {
-  pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: {
-      rejectUnauthorized: false
-    }
-  });
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL
+    ? { rejectUnauthorized: false }
+    : undefined
+});
+
+// CREATE USERS TABLE
+
+async function initDatabase() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id BIGSERIAL PRIMARY KEY,
+      email TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      credits INTEGER NOT NULL DEFAULT 1,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  console.log("Velora AI database ready");
 }
 
-// Website
+initDatabase().catch(error => {
+  console.error("Database initialization failed:", error);
+});
+
+// WEBSITE
+
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
-// Health check
+// HEALTH CHECK
+
 app.get("/api/health", (req, res) => {
   res.json({
     success: true,
@@ -40,7 +60,210 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-// AI photo generation
+// REGISTER
+
+app.post("/api/register", async (req, res) => {
+  try {
+    const { email, password } = req.body || {};
+
+    if (
+      typeof email !== "string" ||
+      typeof password !== "string" ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
+      password.length < 8 ||
+      password.length > 128
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: "Проверь email и пароль (минимум 8 символов)"
+      });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+
+    const existing = await pool.query(
+      "SELECT id FROM users WHERE email = $1",
+      [normalizedEmail]
+    );
+
+    if (existing.rows.length) {
+      return res.status(409).json({
+        success: false,
+        error: "Этот email уже зарегистрирован"
+      });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+
+    const result = await pool.query(
+      `INSERT INTO users (email, password_hash)
+       VALUES ($1, $2)
+       RETURNING id, email, credits`,
+      [normalizedEmail, passwordHash]
+    );
+
+    const user = result.rows[0];
+
+    const token = jwt.sign(
+      { userId: user.id },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    res.status(201).json({
+      success: true,
+      token,
+      user
+    });
+
+  } catch (error) {
+    console.error("Register error:", error);
+
+    res.status(500).json({
+      success: false,
+      error: "Ошибка регистрации"
+    });
+  }
+});
+
+// LOGIN
+
+app.post("/api/login", async (req, res) => {
+  try {
+    const { email, password } = req.body || {};
+
+    if (
+      typeof email !== "string" ||
+      typeof password !== "string"
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: "Введите email и пароль"
+      });
+    }
+
+    const result = await pool.query(
+      "SELECT * FROM users WHERE email = $1",
+      [email.trim().toLowerCase()]
+    );
+
+    const user = result.rows[0];
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        error: "Неверный email или пароль"
+      });
+    }
+
+    const validPassword = await bcrypt.compare(
+      password,
+      user.password_hash
+    );
+
+    if (!validPassword) {
+      return res.status(401).json({
+        success: false,
+        error: "Неверный email или пароль"
+      });
+    }
+
+    const token = jwt.sign(
+      { userId: user.id },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    res.json({
+      success: true,
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        credits: user.credits
+      }
+    });
+
+  } catch (error) {
+    console.error("Login error:", error);
+
+    res.status(500).json({
+      success: false,
+      error: "Ошибка входа"
+    });
+  }
+});
+
+// AUTH MIDDLEWARE
+
+function authenticate(req, res, next) {
+  const authorization = req.headers.authorization || "";
+
+  const token = authorization.startsWith("Bearer ")
+    ? authorization.slice(7)
+    : null;
+
+  if (!token) {
+    return res.status(401).json({
+      success: false,
+      error: "Необходим вход в аккаунт"
+    });
+  }
+
+  try {
+    const decoded = jwt.verify(
+      token,
+      process.env.JWT_SECRET
+    );
+
+    req.userId = decoded.userId;
+
+    next();
+
+  } catch (error) {
+    res.status(401).json({
+      success: false,
+      error: "Сессия истекла"
+    });
+  }
+}
+
+// USER PROFILE
+
+app.get("/api/me", authenticate, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, email, credits, created_at
+       FROM users
+       WHERE id = $1`,
+      [req.userId]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({
+        success: false,
+        error: "Пользователь не найден"
+      });
+    }
+
+    res.json({
+      success: true,
+      user: result.rows[0]
+    });
+
+  } catch (error) {
+    console.error("Profile error:", error);
+
+    res.status(500).json({
+      success: false,
+      error: "Ошибка загрузки профиля"
+    });
+  }
+});
+
+// AI PHOTO GENERATION
+// Existing test access remains available.
+
 app.post("/api/generate", async (req, res) => {
   try {
     const secret = process.env.VELORA_TEST_KEY;
@@ -48,7 +271,7 @@ app.post("/api/generate", async (req, res) => {
     if (!secret) {
       return res.status(503).json({
         success: false,
-        error: "Test access is not configured"
+        error: "Тестовый доступ не настроен"
       });
     }
 
@@ -63,7 +286,6 @@ app.post("/api/generate", async (req, res) => {
 
     const { image, prompt } = req.body || {};
 
-    // Validate image
     if (
       typeof image !== "string" ||
       !(
@@ -73,11 +295,10 @@ app.post("/api/generate", async (req, res) => {
     ) {
       return res.status(400).json({
         success: false,
-        error: "Загрузи фотографию JPEG или PNG"
+        error: "Необходима фотография JPEG или PNG"
       });
     }
 
-    // Validate prompt
     if (
       typeof prompt !== "string" ||
       !prompt.trim() ||
@@ -89,16 +310,6 @@ app.post("/api/generate", async (req, res) => {
       });
     }
 
-    if (!process.env.REPLICATE_API_TOKEN) {
-      return res.status(503).json({
-        success: false,
-        error: "Replicate API не подключён"
-      });
-    }
-
-    console.log("Velora AI: generation started");
-
-    // Generate image
     const output = await replicate.run(
       "black-forest-labs/flux-kontext-pro",
       {
@@ -111,46 +322,34 @@ app.post("/api/generate", async (req, res) => {
       }
     );
 
-    // Extract image URL
-    let imageUrl = null;
-
-    if (typeof output === "string") {
-      imageUrl = output;
-    } else if (typeof output?.url === "function") {
-      imageUrl = output.url();
-    } else if (Array.isArray(output) && output.length) {
-      const first = output[0];
-
-      imageUrl =
-        typeof first === "string"
-          ? first
-          : typeof first?.url === "function"
-            ? first.url()
-            : null;
-    }
+    const imageUrl =
+      typeof output === "string"
+        ? output
+        : typeof output?.url === "function"
+          ? output.url()
+          : null;
 
     if (!imageUrl) {
       throw new Error("No image URL returned");
     }
 
-    console.log("Velora AI: generation completed");
-
-    return res.json({
+    res.json({
       success: true,
-      image: String(imageUrl)
+      image: imageUrl
     });
 
   } catch (error) {
-    console.error("Velora AI generation error:", error);
+    console.error("Generation error:", error);
 
-    return res.status(500).json({
+    res.status(500).json({
       success: false,
-      error: "Ошибка генерации. Проверь настройки Replicate."
+      error: "Ошибка генерации фотографии"
     });
   }
 });
 
-// Start server
+// START SERVER
+
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, "0.0.0.0", () => {
