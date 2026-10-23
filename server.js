@@ -40,10 +40,12 @@ app.post("/api/generate", async (req, res) => {
     const { image, prompt } = req.body;
 
     if (
-      typeof image !== "string" ||
-      !image.startsWith("data:image/jpeg;base64,") &&
-      !image.startsWith("data:image/png;base64,")
-    ) {
+  typeof image !== "string" ||
+  !(
+    image.startsWith("data:image/jpeg;base64,") ||
+    image.startsWith("data:image/png;base64,")
+  )
+) {
       return res.status(400).json({
         error: "A JPEG or PNG image is required"
       });
