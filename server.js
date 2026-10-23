@@ -37,6 +37,11 @@ async function initDatabase() {
     )
   `);
 
+    await pool.query(`
+    ALTER TABLE users
+    ALTER COLUMN credits SET DEFAULT 2
+  `);
+
   console.log("Velora AI database ready");
 }
 
