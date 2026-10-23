@@ -159,6 +159,9 @@ app.post("/api/register", async (req, res) => {
 
   } catch (error) {
     console.error("Register error:", error);
+    if (error.code === "23505") {
+      return res.status(409).json({ success: false, error: "Этот email уже зарегистрирован" });
+    }
 
     res.status(500).json({
       success: false,
