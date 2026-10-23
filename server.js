@@ -8,7 +8,12 @@ const path = require("path");
 
 const app = express();
 
-app.use(cors({ origin: process.env.ALLOWED_ORIGIN ? process.env.ALLOWED_ORIGIN.split(",").map(x => x.trim()) : true }));
+const allowedOrigins = (process.env.ALLOWED_ORIGIN || "https://velora-ai-wyp6.onrender.com")
+  .split(",").map(origin => origin.trim()).filter(Boolean);
+app.use(cors({ origin(origin, callback) {
+  if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+  return callback(null, false);
+} }));
 app.use(express.json({ limit: "15mb" }));
 app.disable("x-powered-by");
 
@@ -67,6 +72,31 @@ app.get("/api/health", (req, res) => {
     success: true,
     service: "Velora AI",
     status: "running"
+  });
+});
+
+// Public readiness check: does not expose credentials or configuration values.
+app.get("/api/ready", async (req, res) => {
+  const authReady = Boolean(process.env.JWT_SECRET && process.env.JWT_SECRET.length >= 32);
+  const generationReady = Boolean(process.env.REPLICATE_API_TOKEN);
+  let databaseReady = false;
+  if (process.env.DATABASE_URL) {
+    try {
+      await pool.query("SELECT 1 FROM users LIMIT 0");
+      databaseReady = true;
+    } catch (error) {
+      console.error("Readiness database check failed:", error.message);
+    }
+  }
+  const ready = authReady && generationReady && databaseReady;
+  res.status(ready ? 200 : 503).json({
+    success: ready,
+    service: "Velora AI",
+    components: {
+      database: databaseReady ? "ready" : "unavailable",
+      authentication: authReady ? "ready" : "unavailable",
+      generation: generationReady ? "configured" : "unavailable"
+    }
   });
 });
 
