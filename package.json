@@ -1,4 +1,5 @@
 {
+  {
   "name": "velora-ai",
   "version": "1.0.0",
   "description": "Velora AI Photo Studio",
@@ -10,6 +11,7 @@
     "express": "^4.21.2",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
-"replicate": "^1.4.0"
+    "replicate": "^1.4.0",
+    "pg": "^8.13.1"
   }
 }
