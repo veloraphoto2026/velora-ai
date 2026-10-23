@@ -32,7 +32,7 @@ async function initDatabase() {
       id BIGSERIAL PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
-      credits INTEGER NOT NULL DEFAULT 1,
+      credits INTEGER NOT NULL DEFAULT 2,
       created_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
