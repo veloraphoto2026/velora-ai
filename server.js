@@ -27,11 +27,12 @@ const replicate = new Replicate({
 
 // DATABASE
 
+// Render internal PostgreSQL connections generally do not require TLS.
+// For external PostgreSQL, set DATABASE_SSL=true and provide a trusted CA.
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL
-    ? { rejectUnauthorized: false }
-    : undefined
+  ssl: process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: true } : undefined,
+  connectionTimeoutMillis: 5000
 });
 
 // CREATE USERS TABLE
