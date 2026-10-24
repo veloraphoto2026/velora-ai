@@ -190,19 +190,23 @@ footer {
 <textarea id="prompt"
 placeholder="Например: красивое вечернее платье, Париж, мягкий свет"></textarea>
 
-<label for="testKey">🔐 Тестовый доступ</label>
-<input
-  type="password"
-  id="testKey"
-  placeholder="Введи тестовый ключ"
-  autocomplete="off"
->
+<div id="account" class="panel">
+  <h2>Личный кабинет</h2>
+  <p id="accountInfo">Войди или зарегистрируйся, чтобы получить 2 бесплатные генерации.</p>
+  <div id="authFields">
+    <label for="email">Email</label><input id="email" type="email" autocomplete="email">
+    <label for="password">Пароль (от 8 символов)</label><input id="password" type="password" autocomplete="current-password">
+    <button id="login" type="button">Войти</button>
+    <button id="register" type="button">Зарегистрироваться</button>
+  </div>
+  <button id="logout" type="button" style="display:none">Выйти</button>
+</div>
 <button id="generate" type="button">
   ✨ Создать фотографию
 </button>
 
 <p class="note">
-  Тестовая версия. Генерация пока не подключена к интерфейсу.
+  Для генерации нужен аккаунт. Новому пользователю доступны две бесплатные фотографии.
   Загруженная фотография остаётся в браузере.
 </p>
 
@@ -252,6 +256,49 @@ const styles = {
     "Романтический мультфильм"
   ]
 };
+
+async function authRequest(endpoint) {
+  const email = document.getElementById("email").value.trim();
+  const password = document.getElementById("password").value;
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({email,password})
+    });
+    const data = await response.json();
+    if (!response.ok || !data.token) throw new Error(data.error || "Ошибка авторизации");
+    sessionStorage.setItem("veloraToken", data.token);
+    document.getElementById("password").value = "";
+    await loadAccount();
+  } catch(e) { document.getElementById("accountInfo").textContent = e.message; }
+}
+async function loadAccount() {
+  const token = sessionStorage.getItem("veloraToken");
+  if (!token) return;
+  try {
+    const response = await fetch("/api/me", {headers:{"Authorization":"Bearer "+token}});
+    if (!response.ok) throw new Error("Требуется повторный вход");
+    const data = await response.json();
+    document.getElementById("accountInfo").textContent =
+      data.user.email + " · Бесплатных генераций: " + data.user.credits;
+    document.getElementById("authFields").style.display = "none";
+    document.getElementById("logout").style.display = "block";
+  } catch(e) {
+    sessionStorage.removeItem("veloraToken");
+    document.getElementById("accountInfo").textContent = e.message;
+    document.getElementById("authFields").style.display = "block";
+    document.getElementById("logout").style.display = "none";
+  }
+}
+document.getElementById("login").onclick = () => authRequest("/api/login");
+document.getElementById("register").onclick = () => authRequest("/api/register");
+document.getElementById("logout").onclick = () => {
+  sessionStorage.removeItem("veloraToken");
+  document.getElementById("authFields").style.display = "block";
+  document.getElementById("logout").style.display = "none";
+  document.getElementById("accountInfo").textContent = "Ты вышла из аккаунта.";
+};
+loadAccount();
 
 const photo = document.getElementById("photo");
 const mode = document.getElementById("mode");
@@ -312,7 +359,7 @@ photo.addEventListener("change", () => {
 
 document.getElementById("generate").addEventListener("click", async () => {
   const button = document.getElementById("generate");
-  const key = document.getElementById("testKey").value.trim();
+  const token = sessionStorage.getItem("veloraToken");
 
   if (!photo.files.length) {
     status.textContent = "Сначала загрузи фотографию";
@@ -365,7 +412,7 @@ document.getElementById("generate").addEventListener("click", async () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-velora-key": key
+        "Authorization": "Bearer " + token
       },
       body: JSON.stringify({
         image,
@@ -383,7 +430,7 @@ document.getElementById("generate").addEventListener("click", async () => {
     output.src = result.image;
     output.style.display = "block";
 
-    status.textContent = "✅ Фотография готова!";
+    status.textContent = "✅ Фотография готова! Осталось бесплатных генераций: " + result.credits;\n    await loadAccount();
 
   } catch (error) {
     status.textContent = "Ошибка: " + error.message;
