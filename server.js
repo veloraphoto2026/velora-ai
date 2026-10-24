@@ -267,7 +267,7 @@ app.get("/api/me", authenticate, async (req, res) => {
 });
 
 // AI PHOTO GENERATION
-// Existing test access remains available.
+// Requires a logged-in account; test-key bypass is disabled on this branch.
 
 app.post("/api/generate", authenticate, async (req, res) => {
   const { image, prompt } = req.body || {};
@@ -279,9 +279,10 @@ app.post("/api/generate", authenticate, async (req, res) => {
   }
 
   // Reserve a credit atomically before invoking the paid model.
-  const client = await pool.connect();
+  let client;
   let reserved = false;
   try {
+    client = await pool.connect();
     const debit = await client.query(
       "UPDATE users SET credits = credits - 1 WHERE id = $1 AND credits > 0 RETURNING credits",
       [req.userId]
@@ -307,7 +308,7 @@ app.post("/api/generate", authenticate, async (req, res) => {
     }
     res.status(500).json({ success: false, error: "Ошибка генерации. Попробуй ещё раз." });
   } finally {
-    client.release();
+    if (client) client.release();
   }
 });
 
