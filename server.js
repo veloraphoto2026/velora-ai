@@ -34,7 +34,7 @@ function createApp({ pool, replicate, jwtSecret, generationEnabled = true, testK
     }
     next();
   };
-  app.use(["/api/register", "/api/login", "/api/generate"], limiter);
+  app.use(["/api/register", "/api/login", "/api/generate", "/api/generate/account"], limiter);
   const dummyHash = bcrypt.hashSync("unmatched-local-password", 12);
 
   // Restrict cross-origin requests to the separate Velora static website.
