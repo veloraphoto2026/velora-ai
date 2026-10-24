@@ -39,5 +39,12 @@ jobs:
           if (!scripts.length) throw new Error('No inline scripts found');
           for (const [, script] of scripts) new vm.Script(script);
           NODE
+      - name: Validate backup script without database credentials
+        run: |
+          bash -n scripts/backup-postgres.sh
+          if env -u VELORA_BACKUP_DATABASE_URL bash scripts/backup-postgres.sh; then
+            echo "Backup script unexpectedly succeeded without database credentials" >&2
+            exit 1
+          fi
       - name: Isolated PostgreSQL integration tests with fake Replicate
         run: npm test
