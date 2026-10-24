@@ -32,5 +32,5 @@ jobs:
         with:
           node-version: '22'
       - run: npm install --ignore-scripts --no-audit --no-fund
-      - run: npm test
+      - run: node --test --test-concurrency=1 tests/*.test.js
       - run: node --check server.js
