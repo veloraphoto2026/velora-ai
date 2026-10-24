@@ -108,7 +108,7 @@ app.post("/api/register", limitRequests, async (req, res) => {
     if (
       typeof email !== "string" ||
       typeof password !== "string" ||
-      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) ||
       password.length < 8 ||
       password.length > 128
     ) {
@@ -380,7 +380,7 @@ app.post("/api/generate", limitRequests, authenticate, async (req, res) => {
         } finally { client.release(); }
       } catch(refundError) { console.error("Refund connection failed for job",jobId,refundError); }
     }
-    return res.status(500).json({success:false,error:"Не удалось создать фотографию. Проверь баланс в личном кабинете"});
+    return res.status(500).json({success:false,error:providerSucceeded ? "Фотография создана, но произошла ошибка сохранения статуса. Обратитесь в поддержку; кредит не возвращён автоматически." : "Не удалось создать фотографию. Проверь баланс в личном кабинете"});
   }
 });
 
