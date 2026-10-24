@@ -20,9 +20,11 @@ const replicate = new Replicate({
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL
-    ? { rejectUnauthorized: false }
-    : undefined
+  ssl: process.env.DATABASE_SSL_CA
+    ? { ca: process.env.DATABASE_SSL_CA, rejectUnauthorized: true }
+    : (process.env.DATABASE_URL && !/localhost|127\.0\.0\.1/.test(process.env.DATABASE_URL)
+        ? { rejectUnauthorized: false } // TODO: configure DATABASE_SSL_CA for verified TLS
+        : undefined)
 });
 
 // CREATE USERS TABLE
@@ -124,6 +126,7 @@ app.post("/api/register", async (req, res) => {
     });
 
   } catch (error) {
+    if (error.code === "23505") return res.status(409).json({ success: false, error: "Этот email уже зарегистрирован" });
     console.error("Register error:", error);
 
     res.status(500).json({
