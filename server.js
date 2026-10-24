@@ -14,7 +14,19 @@ if (!process.env.DATABASE_URL) {
 }
 const app = express();
 
-// Same-origin website: do not enable unrestricted cross-origin API access.
+// Only the official separately hosted website may call the API from browsers.
+const allowedOrigin = "https://velora-ai-wyp6.onrender.com";
+app.use((req, res, next) => {
+  const origin = req.get("Origin");
+  if (origin === allowedOrigin) {
+    res.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+    res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+  }
+  if (req.method === "OPTIONS") return res.sendStatus(origin === allowedOrigin ? 204 : 403);
+  next();
+});
 app.use(express.json({ limit: "12mb" }));
 app.disable("x-powered-by");
 app.use((req,res,next) => {
