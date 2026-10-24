@@ -44,3 +44,8 @@ test("daily generation cap must be explicitly configured and enforced inside a t
   assert.match(server,/dailyUsage\.rows\[0\]\.total >= dailyLimit/);
   assert.match(server,/Дневной лимит генераций достигнут/);
 });
+
+test("database enforces one pending generation per user",()=>{
+  assert.match(server,/CREATE UNIQUE INDEX IF NOT EXISTS one_reserved_job_per_user/);
+  assert.match(server,/ON generation_jobs \(user_id\) WHERE status = 'reserved'/);
+});
