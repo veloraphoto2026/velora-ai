@@ -57,3 +57,15 @@ test("iPhone photo picker matches accepted server formats and privacy notice",()
   assert.match(html,/сервису Replicate для обработки/);
   assert.match(html,/HEIC/);
 });
+
+test("frontend uses the production API endpoint, not static-site relative paths", () => {
+  assert.match(html, /const API_BASE = "https:\/\/velora-ai-api-4rra\.onrender\.com"/);
+  assert.match(html, /fetch\(API_BASE \+ "\/api\/me"/);
+  assert.match(html, /fetch\(API_BASE \+ endpoint/);
+  assert.match(html, /fetch\(API_BASE \+ "\/api\/generate"/);
+});
+test("browser CORS is limited to the official Velora website", () => {
+  assert.match(server, /const allowedOrigin = "https:\/\/velora-ai-wyp6\.onrender\.com"/);
+  assert.match(server, /origin === allowedOrigin/);
+  assert.doesNotMatch(server, /app\.use\(cors\(\)\)/);
+});
