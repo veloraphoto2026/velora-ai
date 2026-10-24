@@ -282,6 +282,14 @@ function validPhotoRequest(body) {
     prompt.length <= 1500;
 }
 
+function imageUrlFromOutput(output) {
+  const candidate = Array.isArray(output) ? output[0] : output;
+  if (typeof candidate === "string") return candidate;
+  if (candidate && typeof candidate.url === "function") return String(candidate.url());
+  if (candidate && typeof candidate.url === "string") return candidate.url;
+  return null;
+}
+
 // Account generations use atomic credit reservation to prevent parallel overspending.
 app.post("/api/generate/account", authenticate, async (req, res) => {
   if (!validPhotoRequest(req.body)) {
@@ -310,9 +318,7 @@ app.post("/api/generate/account", authenticate, async (req, res) => {
         aspect_ratio: "match_input_image"
       }
     });
-    const imageUrl = typeof output === "string"
-      ? output
-      : typeof output?.url === "function" ? output.url() : null;
+    const imageUrl = imageUrlFromOutput(output);
     if (!imageUrl) throw new Error("No image URL returned");
 
     return res.json({ success: true, image: imageUrl, credits: debit.rows[0].credits });
@@ -390,12 +396,7 @@ app.post("/api/generate", async (req, res) => {
       }
     );
 
-    const imageUrl =
-      typeof output === "string"
-        ? output
-        : typeof output?.url === "function"
-          ? output.url()
-          : null;
+    const imageUrl = imageUrlFromOutput(output);
 
     if (!imageUrl) {
       throw new Error("No image URL returned");
