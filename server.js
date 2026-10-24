@@ -8,7 +8,11 @@ const path = require("path");
 
 const app = express();
 
-app.use(cors());
+const allowedOrigins = new Set(["https://velora-ai-wyp6.onrender.com"]);
+app.use(cors({ origin(origin, callback) {
+  if (!origin || allowedOrigins.has(origin)) return callback(null, true);
+  return callback(new Error("Origin not allowed by CORS"));
+} }));
 app.use(express.json({ limit: "15mb" }));
 
 const replicate = new Replicate({
@@ -278,12 +282,10 @@ app.post("/api/generate", authenticate, async (req, res) => {
     return res.status(400).json({ success: false, error: "Проверь фотографию и описание" });
   }
 
-  // Reserve a credit atomically before invoking the paid model.
-  let client;
+  // Atomic reservation prevents concurrent requests spending the same credit.
   let reserved = false;
   try {
-    client = await pool.connect();
-    const debit = await client.query(
+    const debit = await pool.query(
       "UPDATE users SET credits = credits - 1 WHERE id = $1 AND credits > 0 RETURNING credits",
       [req.userId]
     );
@@ -294,21 +296,22 @@ app.post("/api/generate", authenticate, async (req, res) => {
     const output = await replicate.run("black-forest-labs/flux-kontext-pro", {
       input: { prompt: prompt.trim(), input_image: image, output_format: "jpg", aspect_ratio: "match_input_image" }
     });
-    const imageUrl = typeof output === "string" ? output
-      : typeof output?.url === "function" ? output.url()
-      : Array.isArray(output) && typeof output[0] === "string" ? output[0] : null;
-    if (!imageUrl) throw new Error("No image URL returned");
+    const candidate = Array.isArray(output) ? output[0] : output;
+    const imageUrl = typeof candidate === "string" ? candidate
+      : typeof candidate?.url === "function" ? candidate.url()
+      : typeof candidate?.url === "string" ? candidate.url : null;
+    if (typeof imageUrl !== "string" || !/^https:\/\//.test(imageUrl)) {
+      throw new Error("No valid image URL returned");
+    }
     reserved = false;
     res.json({ success: true, image: imageUrl, credits: debit.rows[0].credits });
   } catch (error) {
     console.error("Generation error:", error);
     if (reserved) {
-      try { await client.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [req.userId]); }
+      try { await pool.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [req.userId]); }
       catch (refundError) { console.error("Credit refund failed:", refundError); }
     }
     res.status(500).json({ success: false, error: "Ошибка генерации. Попробуй ещё раз." });
-  } finally {
-    if (client) client.release();
   }
 });
 
