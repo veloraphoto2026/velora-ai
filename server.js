@@ -298,7 +298,7 @@ app.post("/api/generate", authenticate, async (req, res) => {
     });
     const candidate = Array.isArray(output) ? output[0] : output;
     const imageUrl = typeof candidate === "string" ? candidate
-      : typeof candidate?.url === "function" ? candidate.url()
+      : typeof candidate?.url === "function" ? await candidate.url()
       : typeof candidate?.url === "string" ? candidate.url : null;
     if (typeof imageUrl !== "string" || !/^https:\/\//.test(imageUrl)) {
       throw new Error("No valid image URL returned");
