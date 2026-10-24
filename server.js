@@ -8,7 +8,7 @@ const path = require("path");
 
 const app = express();
 
-app.use(cors());
+// Same-origin browser requests do not require permissive CORS.
 app.use(express.json({ limit: "15mb" }));
 
 const replicate = new Replicate({
@@ -85,6 +85,7 @@ app.post("/api/register", async (req, res) => {
     }
 
     const normalizedEmail = email.trim().toLowerCase();
+    if (normalizedEmail.length > 254) return res.status(400).json({success:false,error:"Слишком длинный email"});
 
     const existing = await pool.query(
       "SELECT id FROM users WHERE email = $1",
@@ -139,7 +140,7 @@ app.post("/api/login", async (req, res) => {
 
     if (
       typeof email !== "string" ||
-      typeof password !== "string"
+      typeof password !== "string" || email.length > 254 || password.length > 128
     ) {
       return res.status(400).json({
         success: false,
@@ -282,7 +283,7 @@ app.post("/api/generate/account", authenticate, async (req, res) => {
   if (!validPhotoRequest(req.body)) {
     return res.status(400).json({ success: false, error: "Проверь фото и описание" });
   }
-  if (!process.env.REPLICATE_API_TOKEN) {
+  if (!process.env.REPLICATE_API_TOKEN || !process.env.JWT_SECRET) {
     return res.status(503).json({ success: false, error: "Генерация временно недоступна" });
   }
 
