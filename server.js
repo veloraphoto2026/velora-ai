@@ -61,9 +61,13 @@ const replicate = new Replicate({
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL.includes("localhost") || process.env.DATABASE_URL.includes("127.0.0.1") || process.env.PGSSLMODE === "disable"
-    ? false
-    : { rejectUnauthorized: true }
+  ssl: (() => {
+    const dbHost = new URL(process.env.DATABASE_URL).hostname;
+    const internalHost = dbHost === "localhost" || dbHost === "127.0.0.1" || dbHost.endsWith(".internal");
+    return internalHost || process.env.PGSSLMODE === "disable"
+      ? false
+      : { rejectUnauthorized: true };
+  })()
 });
 
 // CREATE USERS TABLE
