@@ -58,6 +58,28 @@ test("real PostgreSQL registration, login, profile, and disabled generation", { 
     assert.equal(disabled.status, 503);
     const finalProfile = await request("/api/me", "GET", undefined, login.data.token);
     assert.equal(finalProfile.data.user.credits, 2);
+    // Exercise the exact atomic debit statement used by the generation endpoint.
+    const firstDebit = await pool.query(
+      "UPDATE users SET credits = credits - 1 WHERE email=$1 AND credits > 0 RETURNING credits",
+      [email]
+    );
+    assert.equal(firstDebit.rows[0].credits, 1);
+    const secondDebit = await pool.query(
+      "UPDATE users SET credits = credits - 1 WHERE email=$1 AND credits > 0 RETURNING credits",
+      [email]
+    );
+    assert.equal(secondDebit.rows[0].credits, 0);
+    const exhausted = await pool.query(
+      "UPDATE users SET credits = credits - 1 WHERE email=$1 AND credits > 0 RETURNING credits",
+      [email]
+    );
+    assert.equal(exhausted.rowCount, 0, "Credits must not fall below zero");
+    // Simulate provider failure and verify the refund restores exactly one credit.
+    const refund = await pool.query("UPDATE users SET credits = credits + 1 WHERE email=$1 RETURNING credits", [email]);
+    assert.equal(refund.rows[0].credits, 1);
+    const restored = await request("/api/me", "GET", undefined, login.data.token);
+    assert.equal(restored.data.user.credits, 1);
+
   } finally {
     await pool.query("DELETE FROM generation_jobs WHERE user_id IN (SELECT id FROM users WHERE email=$1)", [email]).catch(() => {});
     await pool.query("DELETE FROM users WHERE email=$1", [email]).catch(() => {});
