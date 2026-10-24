@@ -219,8 +219,7 @@ placeholder="Например: красивое вечернее платье, �
 </button>
 
 <p class="note">
-  Тестовая версия. Генерация пока не подключена к интерфейсу.
-  Загруженная фотография остаётся в браузере.
+  Тестовая версия. Для бесплатных генераций войди в аккаунт. Тестовый ключ предназначен только для администратора.
 </p>
 
 <div id="status" class="status" role="status" aria-live="polite"></div>
@@ -386,14 +385,15 @@ photo.addEventListener("change", () => {
 document.getElementById("generate").addEventListener("click", async () => {
   const button = document.getElementById("generate");
   const key = document.getElementById("testKey").value.trim();
+  const useAccount = !!sessionToken;
 
   if (!photo.files.length) {
     status.textContent = "Сначала загрузи фотографию";
     return;
   }
 
-  if (!key) {
-    status.textContent = "Введи тестовый ключ";
+  if (!key && !useAccount) {
+    status.textContent = "Войди в аккаунт или введи тестовый ключ";
     return;
   }
 
@@ -434,11 +434,11 @@ document.getElementById("generate").addEventListener("click", async () => {
       "Preserve the person's facial identity and recognizable features."
     ].filter(Boolean).join(" ");
 
-    const response = await fetch("/api/generate", {
+    const response = await fetch(useAccount ? "/api/generate/account" : "/api/generate", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-velora-key": key
+        ...(useAccount ? { Authorization: "Bearer " + sessionToken } : { "x-velora-key": key })
       },
       body: JSON.stringify({
         image,
@@ -457,6 +457,8 @@ document.getElementById("generate").addEventListener("click", async () => {
     output.style.display = "block";
 
     status.textContent = "✅ Фотография готова!";
+    document.getElementById("download").style.display = "block";
+    if (useAccount) await loadProfile();
 
   } catch (error) {
     status.textContent = "Ошибка: " + error.message;
@@ -466,7 +468,14 @@ document.getElementById("generate").addEventListener("click", async () => {
 });
 
 document.getElementById("download").addEventListener("click", () => {
-  status.textContent = "Сохранение станет доступно после подключения ИИ.";
+  const output = document.getElementById("result");
+  if (!output.src) return;
+  const link = document.createElement("a");
+  link.href = output.src;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.download = "velora-ai-photo.jpg";
+  link.click();
 });
 
 </script>
