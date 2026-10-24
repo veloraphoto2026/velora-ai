@@ -321,10 +321,16 @@ app.post("/api/generate", limitRequests, authenticate, async (req, res) => {
   }
   const jobId = crypto.randomUUID();
   let reserved = false;
+  let providerSucceeded = false;
   try {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      const active = await client.query("SELECT id FROM generation_jobs WHERE user_id=$1 AND status='reserved' LIMIT 1 FOR UPDATE",[req.userId]);
+      if (active.rowCount) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({success:false,error:"Дождись завершения предыдущей генерации"});
+      }
       const debit = await client.query(
         "UPDATE users SET credits = credits - 1 WHERE id = $1 AND credits > 0 RETURNING credits",
         [req.userId]
@@ -350,11 +356,12 @@ app.post("/api/generate", limitRequests, authenticate, async (req, res) => {
     const imageUrl = typeof output === "string" ? output :
       typeof output?.url === "function" ? output.url() : null;
     if (!imageUrl) throw new Error("Provider did not return an image URL");
+    providerSucceeded = true;
     await pool.query("UPDATE generation_jobs SET status='completed' WHERE id=$1",[jobId]);
     return res.json({success:true,image:imageUrl});
   } catch(e) {
     console.error("Generation failed:",e);
-    if (reserved) {
+    if (reserved && !providerSucceeded) {
       try {
         const client = await pool.connect();
         try {
