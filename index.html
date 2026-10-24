@@ -366,8 +366,8 @@ document.getElementById("generate").addEventListener("click", async () => {
     return;
   }
 
-  if (!key) {
-    status.textContent = "Введи тестовый ключ";
+  if (!token) {
+    status.textContent = "Сначала войди в аккаунт";
     return;
   }
 
@@ -430,7 +430,8 @@ document.getElementById("generate").addEventListener("click", async () => {
     output.src = result.image;
     output.style.display = "block";
 
-    status.textContent = "✅ Фотография готова! Осталось бесплатных генераций: " + result.credits;\n    await loadAccount();
+    status.textContent = "✅ Фотография готова! Осталось бесплатных генераций: " + result.credits;
+    await loadAccount();
 
   } catch (error) {
     status.textContent = "Ошибка: " + error.message;
