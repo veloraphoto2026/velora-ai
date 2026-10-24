@@ -7,10 +7,40 @@ const jwt = require("jsonwebtoken");
 const path = require("path");
 const crypto = require("crypto");
 
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+  throw new Error("JWT_SECRET must be configured with at least 32 characters");
+}
+if (!process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL is required for account storage");
+}
 const app = express();
 
 // Same-origin website: do not enable unrestricted cross-origin API access.
 app.use(express.json({ limit: "12mb" }));
+app.disable("x-powered-by");
+app.use((req,res,next) => {
+  res.setHeader("Cache-Control","no-store");
+  res.setHeader("X-Content-Type-Options","nosniff");
+  res.setHeader("Referrer-Policy","no-referrer");
+  next();
+});
+// Per-process throttling for the preview. Production needs a shared store.
+const attempts = new Map();
+function limitRequests(req,res,next) {
+  const key = req.ip + ":" + req.path;
+  const now = Date.now();
+  const entry = attempts.get(key);
+  if (!entry || entry.until < now) {
+    attempts.set(key,{count:1,until:now+15*60*1000});
+    return next();
+  }
+  if (++entry.count > 12) return res.status(429).json({success:false,error:"Слишком много запросов. Попробуй позже"});
+  next();
+}
+setInterval(() => {
+  const now=Date.now();
+  for (const [key,value] of attempts) if(value.until<now) attempts.delete(key);
+},15*60*1000).unref();
 
 const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN
@@ -74,7 +104,7 @@ app.get("/api/health", (req, res) => {
 
 // REGISTER
 
-app.post("/api/register", async (req, res) => {
+app.post("/api/register", limitRequests, async (req, res) => {
   try {
     const { email, password } = req.body || {};
 
@@ -141,7 +171,7 @@ app.post("/api/register", async (req, res) => {
 
 // LOGIN
 
-app.post("/api/login", async (req, res) => {
+app.post("/api/login", limitRequests, async (req, res) => {
   try {
     const { email, password } = req.body || {};
 
@@ -276,7 +306,7 @@ app.get("/api/me", authenticate, async (req, res) => {
 
 // GENERATION: disabled by default until owner explicitly enables paid API usage.
 // Reserve exactly one credit atomically. On provider failure restore the credit.
-app.post("/api/generate", authenticate, async (req, res) => {
+app.post("/api/generate", limitRequests, authenticate, async (req, res) => {
   if (process.env.VELORA_GENERATION_ENABLED !== "true") {
     return res.status(503).json({success:false,error:"Генерация временно отключена до завершения настройки"});
   }
