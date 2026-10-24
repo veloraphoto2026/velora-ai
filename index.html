@@ -250,6 +250,7 @@ placeholder="Например: красивое вечернее платье, �
 
 <script>
 
+const API_BASE = location.hostname === "velora-ai-wyp6.onrender.com" ? "https://velora-ai-api-4rra.onrender.com" : "";
 const authPanel = document.getElementById("authPanel");
 const profilePanel = document.getElementById("profilePanel");
 const authStatus = document.getElementById("authStatus");
@@ -260,7 +261,7 @@ async function authRequest(endpoint) {
   const email = document.getElementById("email").value.trim();
   const password = document.getElementById("password").value;
   try {
-    const response = await fetch(endpoint, {
+    const response = await fetch(API_BASE + endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password })
@@ -278,7 +279,7 @@ async function authRequest(endpoint) {
 async function loadProfile() {
   if (!sessionToken) return;
   try {
-    const response = await fetch("/api/me", {
+    const response = await fetch(API_BASE + "/api/me", {
       headers: { Authorization: "Bearer " + sessionToken }
     });
     if (!response.ok) throw new Error("Сессия завершена. Войди снова.");
@@ -434,7 +435,7 @@ document.getElementById("generate").addEventListener("click", async () => {
       "Preserve the person's facial identity and recognizable features."
     ].filter(Boolean).join(" ");
 
-    const response = await fetch(useAccount ? "/api/generate/account" : "/api/generate", {
+    const response = await fetch(API_BASE + (useAccount ? "/api/generate/account" : "/api/generate"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
