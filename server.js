@@ -8,7 +8,11 @@ const path = require("path");
 
 const app = express();
 
-app.use(cors());
+const allowedOrigins = new Set(["https://velora-ai-wyp6.onrender.com"]);
+app.use(cors({ origin(origin, callback) {
+  if (!origin || allowedOrigins.has(origin)) return callback(null, true);
+  return callback(new Error("Origin not allowed by CORS"));
+} }));
 app.use(express.json({ limit: "15mb" }));
 
 const replicate = new Replicate({
@@ -19,8 +23,8 @@ const replicate = new Replicate({
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL
-    ? { rejectUnauthorized: false }
+  ssl: process.env.DATABASE_URL && process.env.PGSSLMODE === "require"
+    ? { rejectUnauthorized: true }
     : undefined
 });
 
@@ -267,89 +271,47 @@ app.get("/api/me", authenticate, async (req, res) => {
 });
 
 // AI PHOTO GENERATION
-// Existing test access remains available.
+// Requires a logged-in account; test-key bypass is disabled on this branch.
 
-app.post("/api/generate", async (req, res) => {
+app.post("/api/generate", authenticate, async (req, res) => {
+  const { image, prompt } = req.body || {};
+  if (typeof image !== "string" ||
+      !/^data:image\/(jpeg|png);base64,[A-Za-z0-9+/=]+$/.test(image) ||
+      Buffer.byteLength(image, "utf8") > 12 * 1024 * 1024 ||
+      typeof prompt !== "string" || !prompt.trim() || prompt.length > 1500) {
+    return res.status(400).json({ success: false, error: "Проверь фотографию и описание" });
+  }
+
+  // Atomic reservation prevents concurrent requests spending the same credit.
+  let reserved = false;
   try {
-    const secret = process.env.VELORA_TEST_KEY;
-
-    if (!secret) {
-      return res.status(503).json({
-        success: false,
-        error: "Тестовый доступ не настроен"
-      });
-    }
-
-    const providedKey = req.get("x-velora-key");
-
-    if (providedKey !== secret) {
-      return res.status(401).json({
-        success: false,
-        error: "Неверный тестовый ключ"
-      });
-    }
-
-    const { image, prompt } = req.body || {};
-
-    if (
-      typeof image !== "string" ||
-      !(
-        image.startsWith("data:image/jpeg;base64,") ||
-        image.startsWith("data:image/png;base64,")
-      )
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: "Необходима фотография JPEG или PNG"
-      });
-    }
-
-    if (
-      typeof prompt !== "string" ||
-      !prompt.trim() ||
-      prompt.length > 1500
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: "Некорректное описание фотографии"
-      });
-    }
-
-    const output = await replicate.run(
-      "black-forest-labs/flux-kontext-pro",
-      {
-        input: {
-          prompt: prompt.trim(),
-          input_image: image,
-          output_format: "jpg",
-          aspect_ratio: "match_input_image"
-        }
-      }
+    const debit = await pool.query(
+      "UPDATE users SET credits = credits - 1 WHERE id = $1 AND credits > 0 RETURNING credits",
+      [req.userId]
     );
-
-    const imageUrl =
-      typeof output === "string"
-        ? output
-        : typeof output?.url === "function"
-          ? output.url()
-          : null;
-
-    if (!imageUrl) {
-      throw new Error("No image URL returned");
+    if (!debit.rowCount) {
+      return res.status(402).json({ success: false, error: "Бесплатные генерации закончились" });
     }
-
-    res.json({
-      success: true,
-      image: imageUrl
+    reserved = true;
+    const output = await replicate.run("black-forest-labs/flux-kontext-pro", {
+      input: { prompt: prompt.trim(), input_image: image, output_format: "jpg", aspect_ratio: "match_input_image" }
     });
-
+    const candidate = Array.isArray(output) ? output[0] : output;
+    const imageUrl = typeof candidate === "string" ? candidate
+      : typeof candidate?.url === "function" ? await candidate.url()
+      : typeof candidate?.url === "string" ? candidate.url : null;
+    if (typeof imageUrl !== "string" || !/^https:\/\//.test(imageUrl)) {
+      throw new Error("No valid image URL returned");
+    }
+    reserved = false;
+    res.json({ success: true, image: imageUrl, credits: debit.rows[0].credits });
   } catch (error) {
     console.error("Generation error:", error);
-
-    res.status(500).json({
-      success: false,
-      error: "Ошибка генерации фотографии"
-    });
+    if (reserved) {
+      try { await pool.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [req.userId]); }
+      catch (refundError) { console.error("Credit refund failed:", refundError); }
+    }
+    res.status(500).json({ success: false, error: "Ошибка генерации. Попробуй ещё раз." });
   }
 });
 
