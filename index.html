@@ -201,19 +201,13 @@ footer {
 <textarea id="prompt"
 placeholder="Например: красивое вечернее платье, Париж, мягкий свет"></textarea>
 
-<label for="testKey">🔐 Тестовый доступ</label>
-<input
-  type="password"
-  id="testKey"
-  placeholder="Введи тестовый ключ"
-  autocomplete="off"
->
+
 <button id="generate" type="button">
   ✨ Создать фотографию
 </button>
 
 <p class="note">
-  Тестовая версия. Генерация пока не подключена к интерфейсу.
+  Тестовая версия. Генерация будет доступна после безопасного включения сервиса.
   Загруженная фотография остаётся в браузере.
 </p>
 
@@ -357,17 +351,14 @@ photo.addEventListener("change", () => {
 
 document.getElementById("generate").addEventListener("click", async () => {
   const button = document.getElementById("generate");
-  const key = document.getElementById("testKey").value.trim();
+
 
   if (!photo.files.length) {
     status.textContent = "Сначала загрузи фотографию";
     return;
   }
 
-  if (!key) {
-    status.textContent = "Введи тестовый ключ";
-    return;
-  }
+  if (!authToken) { status.textContent = "Сначала войди в личный кабинет"; return; }
 
   const file = photo.files[0];
 
@@ -410,7 +401,7 @@ document.getElementById("generate").addEventListener("click", async () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-velora-key": key
+        "Authorization": "Bearer " + authToken
       },
       body: JSON.stringify({
         image,
@@ -429,9 +420,11 @@ document.getElementById("generate").addEventListener("click", async () => {
     output.style.display = "block";
 
     status.textContent = "✅ Фотография готова!";
+    await refreshProfile();
 
   } catch (error) {
     status.textContent = "Ошибка: " + error.message;
+    if (authToken) refreshProfile().catch(() => {});
   } finally {
     button.disabled = false;
   }
