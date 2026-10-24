@@ -32,3 +32,19 @@ test('provider errors trigger refund attempt', () => {
 test('server does not expose provider token in frontend', () => {
   assert.doesNotMatch(html, /REPLICATE_API_TOKEN|JWT_SECRET|DATABASE_URL/);
 });
+
+test('frontend sends requests to dedicated Render API', () => {
+  assert.match(script[1], /const API_BASE = "https:\/\/velora-ai-api-4rra\.onrender\.com"/);
+  assert.match(script[1], /fetch\(apiUrl\(endpoint\)/);
+  assert.match(script[1], /fetch\(apiUrl\("\/api\/me"\)/);
+  assert.match(script[1], /fetch\(apiUrl\("\/api\/generate"\)/);
+});
+test('browser CORS is limited to official website', () => {
+  assert.match(server, /allowedOrigins/);
+  assert.match(server, /velora-ai-wyp6\.onrender\.com/);
+  assert.doesNotMatch(server, /app\.use\(cors\(\)\)/);
+});
+test('generation resolves image URL and releases reserved credit on errors', () => {
+  assert.match(server, /await candidate\.url\(\)/);
+  assert.match(server, /await pool\.query\("UPDATE users SET credits = credits \+ 1/);
+});
