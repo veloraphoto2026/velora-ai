@@ -1,5 +1,4 @@
 const express = require("express");
-const cors = require("cors");
 const Replicate = require("replicate");
 const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
@@ -50,9 +49,9 @@ const replicate = new Replicate({
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL
-    ? { rejectUnauthorized: false }
-    : undefined
+  ssl: process.env.DATABASE_URL.includes("localhost") || process.env.DATABASE_URL.includes("127.0.0.1")
+    ? false
+    : { rejectUnauthorized: true }
 });
 
 // CREATE USERS TABLE
@@ -82,9 +81,7 @@ async function initDatabase() {
   console.log("Velora AI database ready");
 }
 
-initDatabase().catch(error => {
-  console.error("Database initialization failed:", error);
-});
+
 
 // WEBSITE
 
@@ -389,6 +386,12 @@ app.post("/api/generate", limitRequests, authenticate, async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Velora AI running on port ${PORT}`);
+initDatabase().then(() => {
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Velora AI running on port ${PORT}`);
+  });
+}).catch(error => {
+  console.error("Database initialization failed:", error);
+  process.exitCode = 1;
+  pool.end().catch(() => {});
 });
