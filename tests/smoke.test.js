@@ -49,3 +49,11 @@ test("database enforces one pending generation per user",()=>{
   assert.match(server,/CREATE UNIQUE INDEX IF NOT EXISTS one_reserved_job_per_user/);
   assert.match(server,/ON generation_jobs \(user_id\) WHERE status = 'reserved'/);
 });
+
+test("iPhone photo picker matches accepted server formats and privacy notice",()=>{
+  assert.match(html,/<meta name="viewport" content="width=device-width,initial-scale=1">/);
+  assert.match(html,/id="photo" accept="image\/jpeg,image\/png"/);
+  assert.doesNotMatch(html,/accept="[^"]*image\/heic/);
+  assert.match(html,/сервису Replicate для обработки/);
+  assert.match(html,/HEIC/);
+});
