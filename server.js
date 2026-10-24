@@ -8,7 +8,8 @@ const path = require("path");
 
 const app = express();
 
-app.use(cors());
+// Restrict cross-origin requests to the separate Velora static website.
+app.use(cors({ origin: "https://velora-ai-wyp6.onrender.com" }));
 app.use(express.json({ limit: "15mb" }));
 
 const replicate = new Replicate({
@@ -19,9 +20,11 @@ const replicate = new Replicate({
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL
-    ? { rejectUnauthorized: false }
-    : undefined
+  ssl: process.env.DATABASE_SSL_CA
+    ? { ca: process.env.DATABASE_SSL_CA, rejectUnauthorized: true }
+    : (process.env.DATABASE_URL && !/localhost|127\.0\.0\.1/.test(process.env.DATABASE_URL)
+        ? { rejectUnauthorized: false } // TODO: configure DATABASE_SSL_CA for verified TLS
+        : undefined)
 });
 
 // CREATE USERS TABLE
@@ -85,6 +88,7 @@ app.post("/api/register", async (req, res) => {
     }
 
     const normalizedEmail = email.trim().toLowerCase();
+    if (normalizedEmail.length > 254) return res.status(400).json({success:false,error:"Слишком длинный email"});
 
     const existing = await pool.query(
       "SELECT id FROM users WHERE email = $1",
@@ -122,6 +126,7 @@ app.post("/api/register", async (req, res) => {
     });
 
   } catch (error) {
+    if (error.code === "23505") return res.status(409).json({ success: false, error: "Этот email уже зарегистрирован" });
     console.error("Register error:", error);
 
     res.status(500).json({
@@ -139,7 +144,7 @@ app.post("/api/login", async (req, res) => {
 
     if (
       typeof email !== "string" ||
-      typeof password !== "string"
+      typeof password !== "string" || email.length > 254 || password.length > 128
     ) {
       return res.status(400).json({
         success: false,
@@ -266,6 +271,70 @@ app.get("/api/me", authenticate, async (req, res) => {
   }
 });
 
+
+function validPhotoRequest(body) {
+  const { image, prompt } = body || {};
+  return typeof image === "string" &&
+    /^(data:image\/(jpeg|png);base64,)/.test(image) &&
+    image.length <= 12 * 1024 * 1024 &&
+    typeof prompt === "string" &&
+    !!prompt.trim() &&
+    prompt.length <= 1500;
+}
+
+function imageUrlFromOutput(output) {
+  const candidate = Array.isArray(output) ? output[0] : output;
+  if (typeof candidate === "string") return candidate;
+  if (candidate && typeof candidate.url === "function") return String(candidate.url());
+  if (candidate && typeof candidate.url === "string") return candidate.url;
+  return null;
+}
+
+// Account generations use atomic credit reservation to prevent parallel overspending.
+app.post("/api/generate/account", authenticate, async (req, res) => {
+  if (!validPhotoRequest(req.body)) {
+    return res.status(400).json({ success: false, error: "Проверь фото и описание" });
+  }
+  if (!process.env.REPLICATE_API_TOKEN || !process.env.JWT_SECRET) {
+    return res.status(503).json({ success: false, error: "Генерация временно недоступна" });
+  }
+
+  let reserved = false;
+  try {
+    const debit = await pool.query(
+      "UPDATE users SET credits = credits - 1 WHERE id = $1 AND credits > 0 RETURNING credits",
+      [req.userId]
+    );
+    if (!debit.rowCount) {
+      return res.status(402).json({ success: false, error: "Бесплатные генерации закончились" });
+    }
+    reserved = true;
+
+    const output = await replicate.run("black-forest-labs/flux-kontext-pro", {
+      input: {
+        prompt: req.body.prompt.trim(),
+        input_image: req.body.image,
+        output_format: "jpg",
+        aspect_ratio: "match_input_image"
+      }
+    });
+    const imageUrl = imageUrlFromOutput(output);
+    if (!imageUrl) throw new Error("No image URL returned");
+
+    return res.json({ success: true, image: imageUrl, credits: debit.rows[0].credits });
+  } catch (error) {
+    console.error("Account generation failed:", error);
+    if (reserved) {
+      try {
+        await pool.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [req.userId]);
+      } catch (refundError) {
+        console.error("URGENT: credit refund failed for user", req.userId, refundError);
+      }
+    }
+    return res.status(500).json({ success: false, error: "Не удалось создать фото. Проверь баланс в кабинете." });
+  }
+});
+
 // AI PHOTO GENERATION
 // Existing test access remains available.
 
@@ -327,12 +396,7 @@ app.post("/api/generate", async (req, res) => {
       }
     );
 
-    const imageUrl =
-      typeof output === "string"
-        ? output
-        : typeof output?.url === "function"
-          ? output.url()
-          : null;
+    const imageUrl = imageUrlFromOutput(output);
 
     if (!imageUrl) {
       throw new Error("No image URL returned");

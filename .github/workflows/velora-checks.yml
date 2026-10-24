@@ -1,0 +1,31 @@
+name: Velora safe checks
+on:
+  push:
+    branches: [feature/account-ui-safe]
+  pull_request:
+    branches: [main]
+jobs:
+  syntax-and-smoke:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check server syntax
+        run: node --check server.js
+      - name: Check frontend script syntax
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const vm = require('node:vm');
+          const html = fs.readFileSync('index.html', 'utf8');
+          const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)];
+          if (!scripts.length) throw new Error('No inline scripts found');
+          for (const [, script] of scripts) new vm.Script(script);
+          console.log('Frontend JavaScript syntax OK');
+          NODE
+      - name: Run non-destructive smoke suite (preview URL not set)
+        run: node --test tests/smoke.test.js

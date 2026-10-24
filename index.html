@@ -165,6 +165,23 @@ footer {
 
 <main class="container">
 
+<h2>Личный кабинет</h2>
+<div class="panel" id="authPanel">
+  <p class="note">Зарегистрируйся или войди, чтобы увидеть свой баланс бесплатных генераций.</p>
+  <label for="email">Электронная почта</label>
+  <input id="email" type="email" autocomplete="email" maxlength="254">
+  <label for="password">Пароль (минимум 8 символов)</label>
+  <input id="password" type="password" autocomplete="current-password" minlength="8" maxlength="128">
+  <button type="button" id="register">Создать аккаунт</button>
+  <button type="button" id="login">Войти</button>
+  <div id="authStatus" class="status" role="status" aria-live="polite"></div>
+</div>
+<div class="panel" id="profilePanel" hidden>
+  <p id="profileEmail"></p>
+  <p id="profileCredits"></p>
+  <p class="note">Каждая успешная генерация списывает одну бесплатную попытку. Если генерация завершится ошибкой, попытка возвращается.</p>
+  <button type="button" id="logout">Выйти</button>
+</div>
 <h2>ИИ-фотостудия</h2>
 
 <div class="panel">
@@ -202,8 +219,7 @@ placeholder="Например: красивое вечернее платье, �
 </button>
 
 <p class="note">
-  Тестовая версия. Генерация пока не подключена к интерфейсу.
-  Загруженная фотография остаётся в браузере.
+  Тестовая версия. Для бесплатных генераций войди в аккаунт. Тестовый ключ предназначен только для администратора.
 </p>
 
 <div id="status" class="status" role="status" aria-live="polite"></div>
@@ -233,6 +249,63 @@ placeholder="Например: красивое вечернее платье, �
 </footer>
 
 <script>
+
+const API_BASE = location.hostname === "velora-ai-wyp6.onrender.com" ? "https://velora-ai-api-4rra.onrender.com" : "";
+const authPanel = document.getElementById("authPanel");
+const profilePanel = document.getElementById("profilePanel");
+const authStatus = document.getElementById("authStatus");
+let sessionToken = sessionStorage.getItem("velora_session");
+
+async function authRequest(endpoint) {
+  authStatus.textContent = "Проверяем данные...";
+  const email = document.getElementById("email").value.trim();
+  const password = document.getElementById("password").value;
+  try {
+    const response = await fetch(API_BASE + endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password })
+    });
+    const data = await response.json();
+    if (!response.ok || !data.token) throw new Error(data.error || "Не удалось войти");
+    sessionToken = data.token;
+    sessionStorage.setItem("velora_session", sessionToken);
+    document.getElementById("password").value = "";
+    await loadProfile();
+  } catch (error) {
+    authStatus.textContent = error.message;
+  }
+}
+async function loadProfile() {
+  if (!sessionToken) return;
+  try {
+    const response = await fetch(API_BASE + "/api/me", {
+      headers: { Authorization: "Bearer " + sessionToken }
+    });
+    if (!response.ok) throw new Error("Сессия завершена. Войди снова.");
+    const data = await response.json();
+    document.getElementById("profileEmail").textContent = "Аккаунт: " + data.user.email;
+    document.getElementById("profileCredits").textContent = "Бесплатных генераций: " + data.user.credits;
+    authPanel.hidden = true;
+    profilePanel.hidden = false;
+  } catch (error) {
+    sessionToken = null;
+    sessionStorage.removeItem("velora_session");
+    authPanel.hidden = false;
+    profilePanel.hidden = true;
+    authStatus.textContent = error.message;
+  }
+}
+document.getElementById("register").addEventListener("click", () => authRequest("/api/register"));
+document.getElementById("login").addEventListener("click", () => authRequest("/api/login"));
+document.getElementById("logout").addEventListener("click", () => {
+  sessionToken = null;
+  sessionStorage.removeItem("velora_session");
+  authPanel.hidden = false;
+  profilePanel.hidden = true;
+  authStatus.textContent = "Ты вышла из аккаунта.";
+});
+loadProfile();
 
 const styles = {
   real: [
@@ -313,14 +386,16 @@ photo.addEventListener("change", () => {
 document.getElementById("generate").addEventListener("click", async () => {
   const button = document.getElementById("generate");
   const key = document.getElementById("testKey").value.trim();
+  document.getElementById("download").style.display = "none";
+  const useAccount = !!sessionToken;
 
   if (!photo.files.length) {
     status.textContent = "Сначала загрузи фотографию";
     return;
   }
 
-  if (!key) {
-    status.textContent = "Введи тестовый ключ";
+  if (!key && !useAccount) {
+    status.textContent = "Войди в аккаунт или введи тестовый ключ";
     return;
   }
 
@@ -361,11 +436,11 @@ document.getElementById("generate").addEventListener("click", async () => {
       "Preserve the person's facial identity and recognizable features."
     ].filter(Boolean).join(" ");
 
-    const response = await fetch("/api/generate", {
+    const response = await fetch(API_BASE + (useAccount ? "/api/generate/account" : "/api/generate"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-velora-key": key
+        ...(useAccount ? { Authorization: "Bearer " + sessionToken } : { "x-velora-key": key })
       },
       body: JSON.stringify({
         image,
@@ -384,6 +459,12 @@ document.getElementById("generate").addEventListener("click", async () => {
     output.style.display = "block";
 
     status.textContent = "✅ Фотография готова!";
+    document.getElementById("download").style.display = "block";
+    if (useAccount) {
+      // The image is already generated; a temporary profile error must not hide success.
+      await loadProfile();
+      status.textContent = "✅ Фотография готова!";
+    }
 
   } catch (error) {
     status.textContent = "Ошибка: " + error.message;
@@ -393,7 +474,14 @@ document.getElementById("generate").addEventListener("click", async () => {
 });
 
 document.getElementById("download").addEventListener("click", () => {
-  status.textContent = "Сохранение станет доступно после подключения ИИ.";
+  const output = document.getElementById("result");
+  if (!output.src) return;
+  const link = document.createElement("a");
+  link.href = output.src;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.download = "velora-ai-photo.jpg";
+  link.click();
 });
 
 </script>
