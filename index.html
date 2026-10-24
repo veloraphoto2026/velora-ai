@@ -181,7 +181,8 @@ footer {
 <div class="panel">
 
 <label for="photo">📸 Загрузи фотографию</label>
-<input type="file" id="photo" accept="image/jpeg,image/png">\n<p class="note">На iPhone выбери фото в формате JPEG или PNG. Если фото HEIC, предварительно преобразуй его в JPEG.</p>
+<input type="file" id="photo" accept="image/jpeg,image/png">
+<p class="note">На iPhone выбери фото в формате JPEG или PNG. Если фото HEIC, предварительно преобразуй его в JPEG.</p>
 
 <img id="preview" class="preview" alt="Исходная фотография">
 
@@ -317,7 +318,8 @@ updateStyles();
 photo.addEventListener("change", () => {
   const file = photo.files[0];
 
-  status.textContent = "";\n  if (previewUrl) {
+  status.textContent = "";
+  if (previewUrl) {
     URL.revokeObjectURL(previewUrl);
     previewUrl = null;
   }

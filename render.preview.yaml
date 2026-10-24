@@ -1,0 +1,32 @@
+# Import only as a NEW Blueprint. Never sync into production services or groups.
+# Confirm unused names, Free availability, quota isolation and $0 before Apply.
+services:
+  - type: web
+    name: velora-auth-credits-preview
+    runtime: node
+    plan: free
+    branch: feature/auth-credits-safe-preview
+    autoDeploy: false
+    buildCommand: npm install --ignore-scripts --no-audit --no-fund
+    startCommand: node server.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: '22'
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: velora-auth-credits-preview-db
+          property: connectionString
+      - key: VELORA_GENERATION_ENABLED
+        value: 'false'
+      - key: VELORA_DAILY_GENERATION_LIMIT
+        value: '0'
+
+databases:
+  - name: velora-auth-credits-preview-db
+    databaseName: velora_auth_preview
+    user: velora_preview
+    plan: free
+    ipAllowList: []

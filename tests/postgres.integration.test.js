@@ -2,9 +2,10 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { spawn } = require("node:child_process");
 const { Pool } = require("pg");
+const { requireLocalTestDatabase } = require("./test-database.cjs");
 
-test("real PostgreSQL registration, login, profile, and disabled generation", { timeout: 30000 }, async () => {
-  if (!process.env.TEST_DATABASE_URL) return;
+test("real PostgreSQL registration, login, profile, and disabled generation", { timeout: 30000, skip: !process.env.TEST_DATABASE_URL ? "Set TEST_DATABASE_URL to an isolated local test database" : false }, async () => {
+  requireLocalTestDatabase(process.env.TEST_DATABASE_URL);
   const port = 39000 + Math.floor(Math.random() * 1000);
   const env = {
     ...process.env,

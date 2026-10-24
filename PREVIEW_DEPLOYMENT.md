@@ -25,3 +25,42 @@ This branch is a draft preview only. Do not merge into main or connect it to the
 - Do not publish credentials or copy real customer data into preview.
 
 This checklist does not deploy anything or incur API charges.
+
+## Prepared Blueprint (not deployed)
+
+`render.preview.yaml` describes only NEW resources named
+`velora-auth-credits-preview` and `velora-auth-credits-preview-db`. It uses the
+`feature/auth-credits-safe-preview` branch and requests Free for both. The
+website and API share one HTTPS origin, suitable for Safari on iPhone; no
+production frontend/API URL is used. Do not infer a public URL from the names:
+report only Render's actual service URL after deployment and readiness checks.
+
+Before applying, use authorized Render access to confirm both names are unused,
+the workspace permits a free database, both plans cost $0, and new usage cannot
+affect production quotas. Prefer a separate test workspace if available for
+free. Render's Free database limit is one active database per workspace, 1 GB,
+with expiry after 30 days. Free web-service hours and other allowances are
+shared; bandwidth/build overages can incur charges if billing is enabled. Stop
+if quota isolation or absence of costs cannot be established. Never upgrade,
+replace or delete an existing database to make the preview fit. Do not copy
+production environment groups or credentials. See https://render.com/docs/free .
+
+The Blueprint generates a distinct JWT secret, binds only its new PostgreSQL,
+sets generation to false and its limit to zero, omits provider credentials, and
+disables automatic deployment. Check these values again in Render before the
+initial deployment. Neither this file nor saving it to GitHub deploys resources.
+
+## Meaningful local checks
+
+Use a newly created local database named `velora_test` or `velora_test_*` and
+pass its connection as `TEST_DATABASE_URL` to `npm test`. Integration tests now
+reject remote and production database destinations and explicitly report a
+skip when the connection is absent. They create/remove only disposable test
+accounts. Files run sequentially, matching CI and avoiding schema-init races.
+Provider tests use `tests/mock-replicate.cjs`, so they never contact Replicate.
+The PostgreSQL test covers registration, login, profile, exactly 2 initial
+credits, duplicate rejection, disabled generation without debit, SQL debits and
+refund. The provider test covers a mocked failure/refund, one successful mocked
+HTTP generation, and daily-quota rejection. Neither proves a real provider call
+or browser-level Safari behavior, which remain unrun until a reachable preview
+exists.

@@ -2,10 +2,11 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { spawn } = require("node:child_process");
 const { Pool } = require("pg");
+const { requireLocalTestDatabase } = require("./test-database.cjs");
 const path = require("node:path");
 
-test("mocked Replicate failure refunds credit, success consumes one, and limit blocks further calls", { timeout: 45000 }, async () => {
-  if (!process.env.TEST_DATABASE_URL) return;
+test("mocked Replicate failure refunds credit, success consumes one, and limit blocks further calls", { timeout: 45000, skip: !process.env.TEST_DATABASE_URL ? "Set TEST_DATABASE_URL to an isolated local test database" : false }, async () => {
+  requireLocalTestDatabase(process.env.TEST_DATABASE_URL);
   const port = 41000 + Math.floor(Math.random() * 1000);
   const email = "provider-test-" + Date.now() + "@example.test";
   const env = {
