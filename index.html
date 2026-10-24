@@ -165,6 +165,24 @@ footer {
 
 <main class="container">
 
+<section class="panel" aria-labelledby="accountTitle">
+<h2 id="accountTitle">Личный кабинет</h2>
+<form id="authForm">
+<label for="email">Email</label>
+<input id="email" type="email" required maxlength="254" autocomplete="email">
+<label for="password">Пароль</label>
+<input id="password" type="password" required minlength="8" maxlength="128" autocomplete="current-password">
+<button type="submit" id="login">Войти</button>
+<button type="button" id="register">Зарегистрироваться</button>
+<p class="note">Новый аккаунт получает 2 бесплатные генерации.</p>
+</form>
+<div id="account" hidden>
+<p id="accountEmail"></p>
+<p>Осталось бесплатных генераций: <strong id="credits"></strong></p>
+<button id="logout" type="button">Выйти</button>
+</div>
+<p id="accountStatus" class="status" role="status" aria-live="polite"></p>
+</section>
 <h2>ИИ-фотостудия</h2>
 
 <div class="panel">
@@ -190,20 +208,12 @@ footer {
 <textarea id="prompt"
 placeholder="Например: красивое вечернее платье, Париж, мягкий свет"></textarea>
 
-<label for="testKey">🔐 Тестовый доступ</label>
-<input
-  type="password"
-  id="testKey"
-  placeholder="Введи тестовый ключ"
-  autocomplete="off"
->
 <button id="generate" type="button">
   ✨ Создать фотографию
 </button>
 
 <p class="note">
-  Тестовая версия. Генерация пока не подключена к интерфейсу.
-  Загруженная фотография остаётся в браузере.
+  Для генерации войдите в аккаунт. При нажатии «Создать фотографию» фото отправляется на обработку ИИ. Неудачная генерация не списывает баланс.
 </p>
 
 <div id="status" class="status" role="status" aria-live="polite"></div>
@@ -220,9 +230,7 @@ placeholder="Например: красивое вечернее платье, �
 
 <img id="result" class="preview" alt="Результат генерации">
 
-<button id="download" type="button" style="display:none">
-  📥 Сохранить фотографию
-</button>
+
 
 </div>
 
@@ -233,6 +241,62 @@ placeholder="Например: красивое вечернее платье, �
 </footer>
 
 <script>
+
+let token = sessionStorage.getItem("veloraToken");
+let currentUser = null;
+const accountStatus = document.getElementById("accountStatus");
+function showAccount(user) {
+  currentUser = user;
+  document.getElementById("authForm").hidden = Boolean(user);
+  document.getElementById("account").hidden = !user;
+  document.getElementById("accountEmail").textContent = user?.email || "";
+  document.getElementById("credits").textContent = user?.credits ?? "";
+}
+function logout() {
+  token = null;
+  sessionStorage.removeItem("veloraToken");
+  showAccount(null);
+}
+async function api(url, options = {}) {
+  const response = await fetch(url, {
+    ...options,
+    headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}), ...options.headers }
+  });
+  const data = await response.json();
+  if (response.status === 401 && token) logout();
+  if (!response.ok) throw new Error(data.error || "Ошибка запроса");
+  return data;
+}
+async function refreshAccount() {
+  if (!token) return;
+  try { showAccount((await api("/api/me")).user); }
+  catch (error) { accountStatus.textContent = error.message; }
+}
+async function authenticateAccount(path) {
+  const form = document.getElementById("authForm");
+  if (!form.reportValidity()) return;
+  const buttons = form.querySelectorAll("button");
+  buttons.forEach(button => button.disabled = true);
+  try {
+    const data = await api(path, { method: "POST", body: JSON.stringify({
+      email: document.getElementById("email").value.trim(),
+      password: document.getElementById("password").value
+    }) });
+    token = data.token;
+    sessionStorage.setItem("veloraToken", token);
+    document.getElementById("password").value = "";
+    showAccount(data.user);
+    accountStatus.textContent = "Вы вошли в аккаунт";
+  } catch (error) { accountStatus.textContent = error.message; }
+  finally { buttons.forEach(button => button.disabled = false); }
+}
+document.getElementById("authForm").addEventListener("submit", event => {
+  event.preventDefault();
+  authenticateAccount("/api/login");
+});
+document.getElementById("register").addEventListener("click", () => authenticateAccount("/api/register"));
+document.getElementById("logout").addEventListener("click", () => { logout(); accountStatus.textContent = "Вы вышли из аккаунта"; });
+refreshAccount();
 
 const styles = {
   real: [
@@ -312,17 +376,20 @@ photo.addEventListener("change", () => {
 
 document.getElementById("generate").addEventListener("click", async () => {
   const button = document.getElementById("generate");
-  const key = document.getElementById("testKey").value.trim();
+  if (!token || !currentUser) {
+    status.textContent = "Сначала войдите в аккаунт";
+    return;
+  }
+  if (currentUser.credits <= 0) {
+    status.textContent = "Бесплатные генерации закончились";
+    return;
+  }
 
   if (!photo.files.length) {
     status.textContent = "Сначала загрузи фотографию";
     return;
   }
 
-  if (!key) {
-    status.textContent = "Введи тестовый ключ";
-    return;
-  }
 
   const file = photo.files[0];
 
@@ -365,7 +432,7 @@ document.getElementById("generate").addEventListener("click", async () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-velora-key": key
+        "Authorization": "Bearer " + token
       },
       body: JSON.stringify({
         image,
@@ -374,6 +441,7 @@ document.getElementById("generate").addEventListener("click", async () => {
     });
 
     const result = await response.json();
+    if (response.status === 401) logout();
 
     if (!response.ok || !result.success || !result.image) {
       throw new Error(result.error || "Ошибка генерации");
@@ -382,6 +450,7 @@ document.getElementById("generate").addEventListener("click", async () => {
     const output = document.getElementById("result");
     output.src = result.image;
     output.style.display = "block";
+    await refreshAccount();
 
     status.textContent = "✅ Фотография готова!";
 
@@ -390,10 +459,6 @@ document.getElementById("generate").addEventListener("click", async () => {
   } finally {
     button.disabled = false;
   }
-});
-
-document.getElementById("download").addEventListener("click", () => {
-  status.textContent = "Сохранение станет доступно после подключения ИИ.";
 });
 
 </script>

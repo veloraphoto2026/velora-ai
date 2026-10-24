@@ -1,3 +1,4 @@
+require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const Replicate = require("replicate");
@@ -6,357 +7,332 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const path = require("path");
 
-const app = express();
+function validImage(image) {
+  if (typeof image !== "string") return false;
+  const match = /^data:image\/(jpeg|png);base64,([A-Za-z0-9+/]+={0,2})$/.exec(image);
+  if (!match) return false;
+  const data = Buffer.from(match[2], "base64");
+  if (data.length > 8 * 1024 * 1024 || data.toString("base64") !== match[2]) return false;
+  return match[1] === "png"
+    ? data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+    : data.length >= 3 && data[0] === 255 && data[1] === 216 && data[2] === 255;
+}
 
-app.use(cors());
-app.use(express.json({ limit: "15mb" }));
+function createApp({ pool, replicate, jwtSecret, generationEnabled = false }) {
+  if (!jwtSecret) throw new Error("JWT_SECRET is required");
+  const app = express();
 
-const replicate = new Replicate({
-  auth: process.env.REPLICATE_API_TOKEN
-});
+  app.use(cors());
+  app.use(express.json({ limit: "15mb" }));
 
-// DATABASE
+  // CREATE USERS TABLE
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL
-    ? { rejectUnauthorized: false }
-    : undefined
-});
-
-// CREATE USERS TABLE
-
-async function initDatabase() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS users (
-      id BIGSERIAL PRIMARY KEY,
-      email TEXT UNIQUE NOT NULL,
-      password_hash TEXT NOT NULL,
-      credits INTEGER NOT NULL DEFAULT 2,
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
+  async function initDatabase() {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id BIGSERIAL PRIMARY KEY,
+        email TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        credits INTEGER NOT NULL DEFAULT 2 CHECK (credits >= 0),
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
 
     await pool.query(`
-    ALTER TABLE users
-    ALTER COLUMN credits SET DEFAULT 2
-  `);
+      ALTER TABLE users
+      ALTER COLUMN credits SET DEFAULT 2
+    `);
 
-  console.log("Velora AI database ready");
-}
+    console.log("Velora AI database ready");
+  }
 
-initDatabase().catch(error => {
-  console.error("Database initialization failed:", error);
-});
+  // WEBSITE
 
-// WEBSITE
-
-app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "index.html"));
-});
-
-// HEALTH CHECK
-
-app.get("/api/health", (req, res) => {
-  res.json({
-    success: true,
-    service: "Velora AI",
-    status: "running"
+  app.get("/", (req, res) => {
+    res.sendFile(path.join(__dirname, "index.html"));
   });
-});
 
-// REGISTER
+  // HEALTH CHECK
 
-app.post("/api/register", async (req, res) => {
-  try {
-    const { email, password } = req.body || {};
-
-    if (
-      typeof email !== "string" ||
-      typeof password !== "string" ||
-      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
-      password.length < 8 ||
-      password.length > 128
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: "Проверь email и пароль (минимум 8 символов)"
-      });
-    }
-
-    const normalizedEmail = email.trim().toLowerCase();
-
-    const existing = await pool.query(
-      "SELECT id FROM users WHERE email = $1",
-      [normalizedEmail]
-    );
-
-    if (existing.rows.length) {
-      return res.status(409).json({
-        success: false,
-        error: "Этот email уже зарегистрирован"
-      });
-    }
-
-    const passwordHash = await bcrypt.hash(password, 12);
-
-    const result = await pool.query(
-      `INSERT INTO users (email, password_hash)
-       VALUES ($1, $2)
-       RETURNING id, email, credits`,
-      [normalizedEmail, passwordHash]
-    );
-
-    const user = result.rows[0];
-
-    const token = jwt.sign(
-      { userId: user.id },
-      process.env.JWT_SECRET,
-      { expiresIn: "7d" }
-    );
-
-    res.status(201).json({
-      success: true,
-      token,
-      user
-    });
-
-  } catch (error) {
-    console.error("Register error:", error);
-
-    res.status(500).json({
-      success: false,
-      error: "Ошибка регистрации"
-    });
-  }
-});
-
-// LOGIN
-
-app.post("/api/login", async (req, res) => {
-  try {
-    const { email, password } = req.body || {};
-
-    if (
-      typeof email !== "string" ||
-      typeof password !== "string"
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: "Введите email и пароль"
-      });
-    }
-
-    const result = await pool.query(
-      "SELECT * FROM users WHERE email = $1",
-      [email.trim().toLowerCase()]
-    );
-
-    const user = result.rows[0];
-
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        error: "Неверный email или пароль"
-      });
-    }
-
-    const validPassword = await bcrypt.compare(
-      password,
-      user.password_hash
-    );
-
-    if (!validPassword) {
-      return res.status(401).json({
-        success: false,
-        error: "Неверный email или пароль"
-      });
-    }
-
-    const token = jwt.sign(
-      { userId: user.id },
-      process.env.JWT_SECRET,
-      { expiresIn: "7d" }
-    );
-
+  app.get("/api/health", (req, res) => {
     res.json({
       success: true,
-      token,
-      user: {
-        id: user.id,
-        email: user.email,
-        credits: user.credits
+      service: "Velora AI",
+      status: "running"
+    });
+  });
+
+  // REGISTER
+
+  app.post("/api/register", async (req, res) => {
+    try {
+      const { email, password } = req.body || {};
+
+      if (
+        typeof email !== "string" ||
+        typeof password !== "string" ||
+        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) ||
+        email.trim().length > 254 ||
+        password.length < 8 ||
+        password.length > 128 ||
+        Buffer.byteLength(password, "utf8") > 72
+      ) {
+        return res.status(400).json({
+          success: false,
+          error: "Проверь email и пароль (от 8 символов, до 72 байт UTF-8)"
+        });
       }
-    });
 
-  } catch (error) {
-    console.error("Login error:", error);
+      const normalizedEmail = email.trim().toLowerCase();
 
-    res.status(500).json({
-      success: false,
-      error: "Ошибка входа"
-    });
+      const existing = await pool.query(
+        "SELECT id FROM users WHERE email = $1",
+        [normalizedEmail]
+      );
+
+      if (existing.rows.length) {
+        return res.status(409).json({
+          success: false,
+          error: "Этот email уже зарегистрирован"
+        });
+      }
+
+      const passwordHash = await bcrypt.hash(password, 12);
+
+      const result = await pool.query(
+        `INSERT INTO users (email, password_hash)
+         VALUES ($1, $2)
+         RETURNING id, email, credits`,
+        [normalizedEmail, passwordHash]
+      );
+
+      const user = result.rows[0];
+
+      const token = jwt.sign(
+        { userId: user.id },
+        jwtSecret,
+        { expiresIn: "7d" }
+      );
+
+      res.status(201).json({
+        success: true,
+        token,
+        user
+      });
+
+    } catch (error) {
+      if (error.code === "23505") {
+        return res.status(409).json({ success: false, error: "Этот email уже зарегистрирован" });
+      }
+      console.error("Register error:", error.message);
+
+      res.status(500).json({
+        success: false,
+        error: "Ошибка регистрации"
+      });
+    }
+  });
+
+  // LOGIN
+
+  app.post("/api/login", async (req, res) => {
+    try {
+      const { email, password } = req.body || {};
+
+      if (
+        typeof email !== "string" ||
+        typeof password !== "string"
+      ) {
+        return res.status(400).json({
+          success: false,
+          error: "Введите email и пароль"
+        });
+      }
+
+      const result = await pool.query(
+        "SELECT * FROM users WHERE email = $1",
+        [email.trim().toLowerCase()]
+      );
+
+      const user = result.rows[0];
+
+      if (!user) {
+        return res.status(401).json({
+          success: false,
+          error: "Неверный email или пароль"
+        });
+      }
+
+      const validPassword = await bcrypt.compare(
+        password,
+        user.password_hash
+      );
+
+      if (!validPassword) {
+        return res.status(401).json({
+          success: false,
+          error: "Неверный email или пароль"
+        });
+      }
+
+      const token = jwt.sign(
+        { userId: user.id },
+        jwtSecret,
+        { expiresIn: "7d" }
+      );
+
+      res.json({
+        success: true,
+        token,
+        user: {
+          id: user.id,
+          email: user.email,
+          credits: user.credits
+        }
+      });
+
+    } catch (error) {
+      console.error("Login error:", error);
+
+      res.status(500).json({
+        success: false,
+        error: "Ошибка входа"
+      });
+    }
+  });
+
+  // AUTH MIDDLEWARE
+
+  function authenticate(req, res, next) {
+    const authorization = req.headers.authorization || "";
+
+    const token = authorization.startsWith("Bearer ")
+      ? authorization.slice(7)
+      : null;
+
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: "Необходим вход в аккаунт"
+      });
+    }
+
+    try {
+      const decoded = jwt.verify(
+        token,
+        jwtSecret,
+        { algorithms: ["HS256"] }
+      );
+      if (!/^[1-9][0-9]*$/.test(String(decoded.userId))) throw new Error("Invalid user ID");
+
+      req.userId = decoded.userId;
+
+      next();
+
+    } catch (error) {
+      res.status(401).json({
+        success: false,
+        error: "Сессия истекла"
+      });
+    }
   }
-});
 
-// AUTH MIDDLEWARE
+  // USER PROFILE
 
-function authenticate(req, res, next) {
-  const authorization = req.headers.authorization || "";
+  app.get("/api/me", authenticate, async (req, res) => {
+    try {
+      const result = await pool.query(
+        `SELECT id, email, credits, created_at
+         FROM users
+         WHERE id = $1`,
+        [req.userId]
+      );
 
-  const token = authorization.startsWith("Bearer ")
-    ? authorization.slice(7)
-    : null;
+      if (!result.rows.length) {
+        return res.status(404).json({
+          success: false,
+          error: "Пользователь не найден"
+        });
+      }
 
-  if (!token) {
-    return res.status(401).json({
-      success: false,
-      error: "Необходим вход в аккаунт"
-    });
-  }
+      res.json({
+        success: true,
+        user: result.rows[0]
+      });
 
-  try {
-    const decoded = jwt.verify(
-      token,
-      process.env.JWT_SECRET
-    );
+    } catch (error) {
+      console.error("Profile error:", error);
 
-    req.userId = decoded.userId;
+      res.status(500).json({
+        success: false,
+        error: "Ошибка загрузки профиля"
+      });
+    }
+  });
 
-    next();
+  // Generation is authenticated; test keys cannot bypass the user's balance.
+  app.post("/api/generate", authenticate, async (req, res) => {
+    const { image, prompt } = req.body || {};
+    if (!validImage(image) ||
+        typeof prompt !== "string" || !prompt.trim() || prompt.length > 1500) {
+      return res.status(400).json({ success: false, error: "Нужны фотография JPEG/PNG до 8 МБ и описание до 1500 символов" });
+    }
+    if (!generationEnabled) {
+      return res.status(503).json({ success: false, error: "Генерация временно недоступна" });
+    }
+    let client;
+    try {
+      client = await pool.connect();
+      await client.query("BEGIN");
+      // Serialize requests for one account so simultaneous requests cannot overspend.
+      const { rows } = await client.query("SELECT credits FROM users WHERE id=$1 FOR UPDATE", [req.userId]);
+      if (!rows.length || rows[0].credits <= 0) {
+        await client.query("ROLLBACK");
+        return res.status(rows.length ? 402 : 404).json({ success: false, error: rows.length ? "Бесплатные генерации закончились" : "Пользователь не найден" });
+      }
+      const output = await replicate.run("black-forest-labs/flux-kontext-pro", {
+        signal: AbortSignal.timeout(120000),
+        input: { prompt: prompt.trim(), input_image: image, output_format: "jpg", aspect_ratio: "match_input_image" }
+      });
+      const imageUrl = typeof output === "string" ? output : typeof output?.url === "function" ? String(output.url()) : null;
+      if (!imageUrl || new URL(imageUrl).protocol !== "https:") throw new Error("Invalid generation output");
+      const result = await client.query("UPDATE users SET credits=credits-1 WHERE id=$1 RETURNING credits", [req.userId]);
+      await client.query("COMMIT");
+      res.json({ success: true, image: imageUrl, credits: result.rows[0].credits });
+    } catch (error) {
+      if (client) await client.query("ROLLBACK").catch(() => {});
+      console.error("Generation failed:", error.message);
+      res.status(502).json({ success: false, error: "Ошибка генерации. Баланс не списан" });
+    } finally {
+      if (client) client.release();
+    }
+  });
 
-  } catch (error) {
-    res.status(401).json({
-      success: false,
-      error: "Сессия истекла"
-    });
-  }
+  app.use((error, req, res, next) => {
+    if (error.type === "entity.too.large") return res.status(413).json({ success: false, error: "Фотография слишком большая" });
+    if (error instanceof SyntaxError && error.status === 400) return res.status(400).json({ success: false, error: "Некорректный JSON" });
+    console.error(error.message);
+    res.status(500).json({ success: false, error: "Ошибка сервера" });
+  });
+  return { app, initDatabase };
 }
 
-// USER PROFILE
-
-app.get("/api/me", authenticate, async (req, res) => {
+async function start() {
+  if (!process.env.JWT_SECRET) throw new Error("JWT_SECRET is required");
+  const database = new Pool({ connectionString: process.env.DATABASE_URL });
+  const { app, initDatabase } = createApp({
+    pool: database,
+    jwtSecret: process.env.JWT_SECRET,
+    replicate: new Replicate({ auth: process.env.REPLICATE_API_TOKEN }),
+    generationEnabled: Boolean(process.env.REPLICATE_API_TOKEN)
+  });
   try {
-    const result = await pool.query(
-      `SELECT id, email, credits, created_at
-       FROM users
-       WHERE id = $1`,
-      [req.userId]
-    );
-
-    if (!result.rows.length) {
-      return res.status(404).json({
-        success: false,
-        error: "Пользователь не найден"
-      });
-    }
-
-    res.json({
-      success: true,
-      user: result.rows[0]
-    });
-
+    await initDatabase();
   } catch (error) {
-    console.error("Profile error:", error);
-
-    res.status(500).json({
-      success: false,
-      error: "Ошибка загрузки профиля"
-    });
+    await database.end();
+    throw error;
   }
-});
-
-// AI PHOTO GENERATION
-// Existing test access remains available.
-
-app.post("/api/generate", async (req, res) => {
-  try {
-    const secret = process.env.VELORA_TEST_KEY;
-
-    if (!secret) {
-      return res.status(503).json({
-        success: false,
-        error: "Тестовый доступ не настроен"
-      });
-    }
-
-    const providedKey = req.get("x-velora-key");
-
-    if (providedKey !== secret) {
-      return res.status(401).json({
-        success: false,
-        error: "Неверный тестовый ключ"
-      });
-    }
-
-    const { image, prompt } = req.body || {};
-
-    if (
-      typeof image !== "string" ||
-      !(
-        image.startsWith("data:image/jpeg;base64,") ||
-        image.startsWith("data:image/png;base64,")
-      )
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: "Необходима фотография JPEG или PNG"
-      });
-    }
-
-    if (
-      typeof prompt !== "string" ||
-      !prompt.trim() ||
-      prompt.length > 1500
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: "Некорректное описание фотографии"
-      });
-    }
-
-    const output = await replicate.run(
-      "black-forest-labs/flux-kontext-pro",
-      {
-        input: {
-          prompt: prompt.trim(),
-          input_image: image,
-          output_format: "jpg",
-          aspect_ratio: "match_input_image"
-        }
-      }
-    );
-
-    const imageUrl =
-      typeof output === "string"
-        ? output
-        : typeof output?.url === "function"
-          ? output.url()
-          : null;
-
-    if (!imageUrl) {
-      throw new Error("No image URL returned");
-    }
-
-    res.json({
-      success: true,
-      image: imageUrl
-    });
-
-  } catch (error) {
-    console.error("Generation error:", error);
-
-    res.status(500).json({
-      success: false,
-      error: "Ошибка генерации фотографии"
-    });
-  }
-});
-
-// START SERVER
-
-const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Velora AI running on port ${PORT}`);
-});
+  return app.listen(process.env.PORT || 3000, "0.0.0.0", () => console.log("Velora AI running"));
+}
+if (require.main === module) start().catch(error => { console.error(error.message); process.exitCode = 1; });
+module.exports = { createApp };
