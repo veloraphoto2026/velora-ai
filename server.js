@@ -452,6 +452,11 @@ function databaseOptions(settings = process.env) {
   const url = settings.DATABASE_URL ? new URL(settings.DATABASE_URL) : null;
   const host = url ? url.hostname : (settings.PGHOST || "localhost");
   const local = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(host) || host.startsWith("/");
+  // Render's internal PostgreSQL hostname resolves inside its private network.
+  // Require TLS verification for remote databases; allow private-network
+  // connections without TLS when explicitly opted in by the operator.
+  const privateRenderHost = host.endsWith(".internal") || host.endsWith(".render.internal");
+  const internalPlaintext = settings.DATABASE_INTERNAL_PLAINTEXT === "true" && privateRenderHost;
   if (url && !local) {
     // pg URL SSL parameters can override an explicit ssl object. Prevent downgrades.
     for (const name of ["sslmode", "sslcert", "sslkey", "sslrootcert", "uselibpqcompat", "ssl"]) url.searchParams.delete(name);
@@ -460,7 +465,7 @@ function databaseOptions(settings = process.env) {
     connectionString: url ? url.toString() : undefined,
     ssl: settings.DATABASE_SSL_CA
       ? { ca: settings.DATABASE_SSL_CA, rejectUnauthorized: true }
-      : local ? undefined : { rejectUnauthorized: true }
+      : (local || internalPlaintext) ? undefined : { rejectUnauthorized: true }
   };
 }
 
