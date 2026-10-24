@@ -61,7 +61,7 @@ const replicate = new Replicate({
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL.includes("localhost") || process.env.DATABASE_URL.includes("127.0.0.1")
+  ssl: process.env.DATABASE_URL.includes("localhost") || process.env.DATABASE_URL.includes("127.0.0.1") || process.env.PGSSLMODE === "disable"
     ? false
     : { rejectUnauthorized: true }
 });
