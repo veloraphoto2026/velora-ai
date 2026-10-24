@@ -5,8 +5,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test tests/account.integration.test.js",
-    "test:smoke": "node --test tests/smoke.test.js"
+    "test": "node --test tests/account.integration.test.js tests/preview.integration.test.js",
+    "test:smoke": "node --test tests/smoke.test.js",
+    "start:preview": "node preview/server.js"
   },
   "dependencies": {
     "express": "^4.21.2",

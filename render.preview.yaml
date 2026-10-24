@@ -1,0 +1,32 @@
+# Import this file explicitly as a NEW Blueprint, never into an existing service.
+# Confirm both resources display Free ($0) before applying. No paid fallback.
+services:
+  - type: web
+    name: velora-account-preview
+    runtime: node
+    plan: free
+    branch: test/render-free-preview
+    autoDeploy: false
+    buildCommand: npm ci --ignore-scripts
+    startCommand: node preview/server.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: '22'
+      - key: PREVIEW_MODE
+        value: mock
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ENABLE_LEGACY_GENERATION
+        value: 'false'
+      - key: DATABASE_URL
+        fromDatabase:
+          name: velora-preview-db
+          property: connectionString
+
+databases:
+  - name: velora-preview-db
+    databaseName: velora_preview
+    user: velora_preview
+    plan: free
+    ipAllowList: []
