@@ -25,3 +25,14 @@ test("mobile UI contains registration, login and balance",()=>{
   assert.match(html,/id="creditsStatus"/);
   assert.match(html,/Authorization": "Bearer " \+ authToken/);
 });
+
+test("database initialization must finish before server starts",()=>{
+  assert.match(server,/initDatabase\(\)\.then\(\(\) =>/);
+});
+test("provider response supports array output",()=>{
+  assert.match(server,/Array\.isArray\(output\) \? output\[0\] : output/);
+});
+test("only one in-flight generation per user is allowed",()=>{
+  assert.match(server,/SELECT id FROM users WHERE id=\$1 FOR UPDATE/);
+  assert.match(server,/status='reserved' LIMIT 1 FOR UPDATE/);
+});
