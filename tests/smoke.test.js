@@ -16,7 +16,7 @@ test("default free credits and atomic debit",()=>{
 });
 test("generation is disabled by default and requires authentication",()=>{
   assert.match(server,/VELORA_GENERATION_ENABLED !== "true"/);
-  assert.match(server,/app\.post\("\/api\/generate", authenticate/);
+  assert.match(server,/app\.post\("\/api\/generate", limitRequests, authenticate/);
   assert.doesNotMatch(server,/x-velora-key/);
 });
 test("mobile UI contains registration, login and balance",()=>{
