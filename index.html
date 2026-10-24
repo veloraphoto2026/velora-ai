@@ -165,12 +165,24 @@ footer {
 
 <main class="container">
 
+<div class="panel" id="authPanel">
+<h2>Личный кабинет</h2>
+<p class="note">Создай аккаунт или войди. Новым пользователям доступны 2 бесплатные генерации после запуска функции.</p>
+<label for="authEmail">Email</label><input id="authEmail" type="email" autocomplete="email">
+<label for="authPassword">Пароль (не менее 8 символов)</label><input id="authPassword" type="password" minlength="8" autocomplete="current-password">
+<button id="registerButton" type="button">Зарегистрироваться</button>
+<button id="loginButton" type="button">Войти</button>
+<button id="logoutButton" type="button" style="display:none">Выйти</button>
+<p id="authStatus" class="status" role="status" aria-live="polite"></p>
+<p id="creditsStatus" class="note"></p>
+</div>
 <h2>ИИ-фотостудия</h2>
 
 <div class="panel">
 
 <label for="photo">📸 Загрузи фотографию</label>
 <input type="file" id="photo" accept="image/jpeg,image/png">
+<p class="note">На iPhone выбери фото в формате JPEG или PNG. Если фото HEIC, предварительно преобразуй его в JPEG.</p>
 
 <img id="preview" class="preview" alt="Исходная фотография">
 
@@ -190,20 +202,14 @@ footer {
 <textarea id="prompt"
 placeholder="Например: красивое вечернее платье, Париж, мягкий свет"></textarea>
 
-<label for="testKey">🔐 Тестовый доступ</label>
-<input
-  type="password"
-  id="testKey"
-  placeholder="Введи тестовый ключ"
-  autocomplete="off"
->
+
 <button id="generate" type="button">
   ✨ Создать фотографию
 </button>
 
 <p class="note">
-  Тестовая версия. Генерация пока не подключена к интерфейсу.
-  Загруженная фотография остаётся в браузере.
+  Тестовая версия. Генерация будет доступна после безопасного включения сервиса.
+  До нажатия «Создать фотографию» файл остаётся на устройстве. При генерации фото передаётся серверу Velora AI и сервису Replicate для обработки. Не загружай чужие фотографии без разрешения.
 </p>
 
 <div id="status" class="status" role="status" aria-live="polite"></div>
@@ -234,6 +240,41 @@ placeholder="Например: красивое вечернее платье, �
 
 <script>
 
+const API_BASE = "https://velora-ai-api-4rra.onrender.com";
+const authStatus = document.getElementById("authStatus");
+const creditsStatus = document.getElementById("creditsStatus");
+let authToken = sessionStorage.getItem("velora_token");
+async function refreshProfile() {
+  if (!authToken) { creditsStatus.textContent = ""; return; }
+  const response = await fetch(API_BASE + "/api/me", { headers: { Authorization: "Bearer " + authToken } });
+  if (!response.ok) { authToken = null; sessionStorage.removeItem("velora_token"); throw new Error("Войди в аккаунт повторно"); }
+  const data = await response.json();
+  creditsStatus.textContent = "Аккаунт: " + data.user.email + " · Бесплатных генераций: " + data.user.credits;
+  document.getElementById("logoutButton").style.display = "block";
+}
+async function authAction(endpoint) {
+  const email = document.getElementById("authEmail").value.trim();
+  const password = document.getElementById("authPassword").value;
+  authStatus.textContent = "Подключаемся...";
+  try {
+    const response = await fetch(API_BASE + endpoint, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({email,password}) });
+    const data = await response.json();
+    if (!response.ok || !data.token) throw new Error(data.error || "Ошибка авторизации");
+    authToken = data.token;
+    sessionStorage.setItem("velora_token", authToken);
+    document.getElementById("authPassword").value = "";
+    await refreshProfile();
+    authStatus.textContent = "Вы вошли в аккаунт.";
+  } catch(e) { authStatus.textContent = e.message; }
+}
+document.getElementById("registerButton").addEventListener("click", () => authAction("/api/register"));
+document.getElementById("loginButton").addEventListener("click", () => authAction("/api/login"));
+document.getElementById("logoutButton").addEventListener("click", () => {
+  authToken = null; sessionStorage.removeItem("velora_token");
+  creditsStatus.textContent = ""; authStatus.textContent = "Вы вышли из аккаунта.";
+  document.getElementById("logoutButton").style.display = "none";
+});
+if (authToken) refreshProfile().catch(e => { authStatus.textContent = e.message; });
 const styles = {
   real: [
     "Деловая фотосессия",
@@ -278,6 +319,7 @@ updateStyles();
 photo.addEventListener("change", () => {
   const file = photo.files[0];
 
+  status.textContent = "";
   if (previewUrl) {
     URL.revokeObjectURL(previewUrl);
     previewUrl = null;
@@ -292,7 +334,7 @@ photo.addEventListener("change", () => {
   }
 
   if (!["image/jpeg", "image/png"].includes(file.type)) {
-    status.textContent = "Выбери фотографию JPEG или PNG.";
+    status.textContent = "Поддерживаются JPEG и PNG. Фото HEIC с iPhone нужно преобразовать в JPEG.";
     photo.value = "";
     return;
   }
@@ -312,17 +354,14 @@ photo.addEventListener("change", () => {
 
 document.getElementById("generate").addEventListener("click", async () => {
   const button = document.getElementById("generate");
-  const key = document.getElementById("testKey").value.trim();
+
 
   if (!photo.files.length) {
     status.textContent = "Сначала загрузи фотографию";
     return;
   }
 
-  if (!key) {
-    status.textContent = "Введи тестовый ключ";
-    return;
-  }
+  if (!authToken) { status.textContent = "Сначала войди в личный кабинет"; return; }
 
   const file = photo.files[0];
 
@@ -336,6 +375,7 @@ document.getElementById("generate").addEventListener("click", async () => {
     return;
   }
 
+  document.getElementById("download").style.display = "none";
   button.disabled = true;
   status.textContent = "✨ Создаём фотографию. Подожди немного...";
 
@@ -361,11 +401,11 @@ document.getElementById("generate").addEventListener("click", async () => {
       "Preserve the person's facial identity and recognizable features."
     ].filter(Boolean).join(" ");
 
-    const response = await fetch("/api/generate", {
+    const response = await fetch(API_BASE + "/api/generate", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-velora-key": key
+        "Authorization": "Bearer " + authToken
       },
       body: JSON.stringify({
         image,
@@ -383,17 +423,23 @@ document.getElementById("generate").addEventListener("click", async () => {
     output.src = result.image;
     output.style.display = "block";
 
+    document.getElementById("download").style.display = "block";
     status.textContent = "✅ Фотография готова!";
+    await refreshProfile();
 
   } catch (error) {
     status.textContent = "Ошибка: " + error.message;
+    if (authToken) refreshProfile().catch(() => {});
   } finally {
     button.disabled = false;
   }
 });
 
 document.getElementById("download").addEventListener("click", () => {
-  status.textContent = "Сохранение станет доступно после подключения ИИ.";
+  const src = document.getElementById("result").src;
+  if (!src) return;
+  window.open(src, "_blank", "noopener,noreferrer");
+  status.textContent = "Фотография открыта. На iPhone удерживай изображение и выбери «Сохранить в Фото».";
 });
 
 </script>
