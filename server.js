@@ -326,6 +326,7 @@ app.post("/api/generate", limitRequests, authenticate, async (req, res) => {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      await client.query("SELECT id FROM users WHERE id=$1 FOR UPDATE",[req.userId]);
       const active = await client.query("SELECT id FROM generation_jobs WHERE user_id=$1 AND status='reserved' LIMIT 1 FOR UPDATE",[req.userId]);
       if (active.rowCount) {
         await client.query("ROLLBACK");
