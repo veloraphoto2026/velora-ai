@@ -165,6 +165,17 @@ footer {
 
 <main class="container">
 
+<div class="panel" id="authPanel">
+<h2>Личный кабинет</h2>
+<p class="note">Создай аккаунт или войди. Новым пользователям доступны 2 бесплатные генерации после запуска функции.</p>
+<label for="authEmail">Email</label><input id="authEmail" type="email" autocomplete="email">
+<label for="authPassword">Пароль (не менее 8 символов)</label><input id="authPassword" type="password" minlength="8" autocomplete="current-password">
+<button id="registerButton" type="button">Зарегистрироваться</button>
+<button id="loginButton" type="button">Войти</button>
+<button id="logoutButton" type="button" style="display:none">Выйти</button>
+<p id="authStatus" class="status" role="status" aria-live="polite"></p>
+<p id="creditsStatus" class="note"></p>
+</div>
 <h2>ИИ-фотостудия</h2>
 
 <div class="panel">
@@ -234,6 +245,40 @@ placeholder="Например: красивое вечернее платье, �
 
 <script>
 
+const authStatus = document.getElementById("authStatus");
+const creditsStatus = document.getElementById("creditsStatus");
+let authToken = sessionStorage.getItem("velora_token");
+async function refreshProfile() {
+  if (!authToken) { creditsStatus.textContent = ""; return; }
+  const response = await fetch("/api/me", { headers: { Authorization: "Bearer " + authToken } });
+  if (!response.ok) { authToken = null; sessionStorage.removeItem("velora_token"); throw new Error("Войди в аккаунт повторно"); }
+  const data = await response.json();
+  creditsStatus.textContent = "Аккаунт: " + data.user.email + " · Бесплатных генераций: " + data.user.credits;
+  document.getElementById("logoutButton").style.display = "block";
+}
+async function authAction(endpoint) {
+  const email = document.getElementById("authEmail").value.trim();
+  const password = document.getElementById("authPassword").value;
+  authStatus.textContent = "Подключаемся...";
+  try {
+    const response = await fetch(endpoint, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({email,password}) });
+    const data = await response.json();
+    if (!response.ok || !data.token) throw new Error(data.error || "Ошибка авторизации");
+    authToken = data.token;
+    sessionStorage.setItem("velora_token", authToken);
+    document.getElementById("authPassword").value = "";
+    await refreshProfile();
+    authStatus.textContent = "Вы вошли в аккаунт.";
+  } catch(e) { authStatus.textContent = e.message; }
+}
+document.getElementById("registerButton").addEventListener("click", () => authAction("/api/register"));
+document.getElementById("loginButton").addEventListener("click", () => authAction("/api/login"));
+document.getElementById("logoutButton").addEventListener("click", () => {
+  authToken = null; sessionStorage.removeItem("velora_token");
+  creditsStatus.textContent = ""; authStatus.textContent = "Вы вышли из аккаунта.";
+  document.getElementById("logoutButton").style.display = "none";
+});
+if (authToken) refreshProfile().catch(e => { authStatus.textContent = e.message; });
 const styles = {
   real: [
     "Деловая фотосессия",
