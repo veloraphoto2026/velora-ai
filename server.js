@@ -266,6 +266,64 @@ app.get("/api/me", authenticate, async (req, res) => {
   }
 });
 
+
+function validPhotoRequest(body) {
+  const { image, prompt } = body || {};
+  return typeof image === "string" &&
+    /^(data:image\/(jpeg|png);base64,)/.test(image) &&
+    image.length <= 12 * 1024 * 1024 &&
+    typeof prompt === "string" &&
+    !!prompt.trim() &&
+    prompt.length <= 1500;
+}
+
+// Account generations use atomic credit reservation to prevent parallel overspending.
+app.post("/api/generate/account", authenticate, async (req, res) => {
+  if (!validPhotoRequest(req.body)) {
+    return res.status(400).json({ success: false, error: "Проверь фото и описание" });
+  }
+  if (!process.env.REPLICATE_API_TOKEN) {
+    return res.status(503).json({ success: false, error: "Генерация временно недоступна" });
+  }
+
+  let reserved = false;
+  try {
+    const debit = await pool.query(
+      "UPDATE users SET credits = credits - 1 WHERE id = $1 AND credits > 0 RETURNING credits",
+      [req.userId]
+    );
+    if (!debit.rowCount) {
+      return res.status(402).json({ success: false, error: "Бесплатные генерации закончились" });
+    }
+    reserved = true;
+
+    const output = await replicate.run("black-forest-labs/flux-kontext-pro", {
+      input: {
+        prompt: req.body.prompt.trim(),
+        input_image: req.body.image,
+        output_format: "jpg",
+        aspect_ratio: "match_input_image"
+      }
+    });
+    const imageUrl = typeof output === "string"
+      ? output
+      : typeof output?.url === "function" ? output.url() : null;
+    if (!imageUrl) throw new Error("No image URL returned");
+
+    return res.json({ success: true, image: imageUrl, credits: debit.rows[0].credits });
+  } catch (error) {
+    console.error("Account generation failed:", error);
+    if (reserved) {
+      try {
+        await pool.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [req.userId]);
+      } catch (refundError) {
+        console.error("URGENT: credit refund failed for user", req.userId, refundError);
+      }
+    }
+    return res.status(500).json({ success: false, error: "Не удалось создать фото. Проверь баланс в кабинете." });
+  }
+});
+
 // AI PHOTO GENERATION
 // Existing test access remains available.
 
