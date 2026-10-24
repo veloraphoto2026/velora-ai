@@ -4,7 +4,9 @@
   "description": "Velora AI Photo Studio",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test tests/account.integration.test.js",
+    "test:smoke": "node --test tests/smoke.test.js"
   },
   "dependencies": {
     "express": "^4.21.2",

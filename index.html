@@ -255,6 +255,10 @@ const authPanel = document.getElementById("authPanel");
 const profilePanel = document.getElementById("profilePanel");
 const authStatus = document.getElementById("authStatus");
 let sessionToken = sessionStorage.getItem("velora_session");
+let pendingRequests;
+try { pendingRequests = JSON.parse(sessionStorage.getItem("velora_pending") || "{}"); }
+catch { pendingRequests = {}; }
+if (!pendingRequests || typeof pendingRequests !== "object" || Array.isArray(pendingRequests)) pendingRequests = {};
 
 async function authRequest(endpoint) {
   authStatus.textContent = "Проверяем данные...";
@@ -436,19 +440,28 @@ document.getElementById("generate").addEventListener("click", async () => {
       "Preserve the person's facial identity and recognizable features."
     ].filter(Boolean).join(" ");
 
+    // Retain the key after transport/server errors so retrying cannot charge twice.
+    const payload = JSON.stringify({ image, prompt: fullPrompt });
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode((sessionToken || "") + payload));
+    const identity = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+    if (useAccount && !pendingRequests[identity]) {
+      pendingRequests[identity] = crypto.randomUUID();
+      sessionStorage.setItem("velora_pending", JSON.stringify(pendingRequests));
+    }
     const response = await fetch(API_BASE + (useAccount ? "/api/generate/account" : "/api/generate"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(useAccount ? { Authorization: "Bearer " + sessionToken } : { "x-velora-key": key })
+        ...(useAccount ? { Authorization: "Bearer " + sessionToken, "Idempotency-Key": pendingRequests[identity] } : { "x-velora-key": key })
       },
-      body: JSON.stringify({
-        image,
-        prompt: fullPrompt
-      })
+      body: payload
     });
 
     const result = await response.json();
+    if (useAccount && (response.ok || [400, 401, 402, 502].includes(response.status) || result.code === "GENERATION_FAILED")) {
+      delete pendingRequests[identity];
+      sessionStorage.setItem("velora_pending", JSON.stringify(pendingRequests));
+    }
 
     if (!response.ok || !result.success || !result.image) {
       throw new Error(result.error || "Ошибка генерации");

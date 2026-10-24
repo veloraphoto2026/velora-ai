@@ -1,23 +1,36 @@
 name: Velora safe checks
 on:
   push:
-    branches: [feature/account-ui-safe]
+    branches: [feature/account-ui-safe, fix/account-credit-security]
   pull_request:
-    branches: [main]
+    branches: [main, feature/account-ui-safe]
 jobs:
-  syntax-and-smoke:
+  account-tests:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Check server syntax
-        run: node --check server.js
-      - name: Check frontend script syntax
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Check server and frontend syntax
         run: |
+          node --check server.js
           node - <<'NODE'
           const fs = require('node:fs');
           const vm = require('node:vm');
@@ -25,7 +38,6 @@ jobs:
           const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)];
           if (!scripts.length) throw new Error('No inline scripts found');
           for (const [, script] of scripts) new vm.Script(script);
-          console.log('Frontend JavaScript syntax OK');
           NODE
-      - name: Run non-destructive smoke suite (preview URL not set)
-        run: node --test tests/smoke.test.js
+      - name: Isolated PostgreSQL integration tests with fake Replicate
+        run: npm test
