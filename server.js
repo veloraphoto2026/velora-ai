@@ -351,9 +351,11 @@ app.post("/api/generate", limitRequests, authenticate, async (req, res) => {
     const output = await replicate.run("black-forest-labs/flux-kontext-pro", {
       input:{prompt:prompt.trim(),input_image:image,output_format:"jpg",aspect_ratio:"match_input_image"}
     });
-    const imageUrl = typeof output === "string" ? output :
-      typeof output?.url === "function" ? output.url() : null;
-    if (!imageUrl) throw new Error("Provider did not return an image URL");
+    const candidate = Array.isArray(output) ? output[0] : output;
+    const imageUrl = typeof candidate === "string" ? candidate :
+      typeof candidate?.url === "function" ? candidate.url() :
+      typeof candidate?.url === "string" ? candidate.url : null;
+    if (!imageUrl || !/^https:\/\//i.test(String(imageUrl))) throw new Error("Provider did not return a secure image URL");
     providerSucceeded = true;
     await pool.query("UPDATE generation_jobs SET status='completed' WHERE id=$1",[jobId]);
     return res.json({success:true,image:imageUrl});
