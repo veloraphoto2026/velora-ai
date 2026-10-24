@@ -12,6 +12,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Run offline regression tests
+        run: node --test tests/*.test.js
       - name: Check server JavaScript
         run: node --check server.js
       - name: Check embedded website JavaScript
