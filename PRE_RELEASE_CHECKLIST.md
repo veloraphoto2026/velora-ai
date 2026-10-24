@@ -9,6 +9,39 @@ This branch is **not production-ready**. Do not merge until these checks pass.
 - VELORA_TEST_KEY is private; disable test access before public launch.
 - Do not expose secrets in browser HTML, client JavaScript or logs.
 
+## Render preview without touching production
+
+The automated account tests are green, but no Render preview has been deployed.
+Do **not** merge this branch or switch the existing production services to it
+just to test it.
+
+1. Confirm in the Render dashboard whether a separate preview web service and
+   separate PostgreSQL instance can be created on a free plan **before**
+   clicking Create. Render pricing/quotas may change. Never authorize a paid
+   resource without the owner's explicit approval.
+2. Do not connect the preview to the production DATABASE_URL. The startup
+   initializer adds tables/indexes, so even a supposedly read-only preview
+   would modify a shared production database.
+3. If free isolated PostgreSQL is unavailable, use the existing GitHub Actions
+   PostgreSQL integration tests as the safe verification path; defer live
+   preview testing rather than using production data or purchasing resources.
+4. For an isolated preview, configure JWT_SECRET and DATABASE_URL as private
+   environment variables; never copy their values into GitHub, issues, logs,
+   screenshots, or chat. Keep ENABLE_LEGACY_GENERATION unset. Do not configure
+   REPLICATE_API_TOKEN until live paid generations are expressly approved.
+5. Preview smoke checks are non-destructive: set VELORA_API_BASE to the preview
+   API origin and run `npm run test:smoke`. They check health, auth rejection,
+   and CORS; they do not register users or invoke Replicate.
+6. Verify the preview database transport (TLS CA or explicit internal network
+   configuration) and a 32-byte-or-longer JWT secret. Never weaken TLS for
+   external database hosts. For internal Render database hostnames only, an
+   operator may explicitly set DATABASE_INTERNAL_PLAINTEXT=true if the
+   provider's private-network transport requires it.
+7. Before production deployment, capture the currently deployed commit,
+   confirm a restorable database backup, verify normalized-email uniqueness
+   against existing records, and plan rollback of code separately from any
+   schema changes. Do not delete existing users or credits.
+
 ## Manual staging tests
 1. Register a fresh test email: profile shows 2 credits.
 2. Sign out and back in: balance persists.
