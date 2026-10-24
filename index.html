@@ -207,7 +207,7 @@ placeholder="Например: красивое вечернее платье, �
 
 <p class="note">
   Для генерации нужен аккаунт. Новому пользователю доступны две бесплатные фотографии.
-  Загруженная фотография остаётся в браузере.
+  Фотография отправляется сервису обработки изображений для создания результата.
 </p>
 
 <div id="status" class="status" role="status" aria-live="polite"></div>
@@ -430,6 +430,7 @@ document.getElementById("generate").addEventListener("click", async () => {
     output.src = result.image;
     output.style.display = "block";
 
+    document.getElementById("download").style.display = "block";
     status.textContent = "✅ Фотография готова! Осталось бесплатных генераций: " + result.credits;
     await loadAccount();
 
@@ -441,7 +442,8 @@ document.getElementById("generate").addEventListener("click", async () => {
 });
 
 document.getElementById("download").addEventListener("click", () => {
-  status.textContent = "Сохранение станет доступно после подключения ИИ.";
+  const url = document.getElementById("result").src;
+  if (url) window.open(url, "_blank", "noopener,noreferrer");
 });
 
 </script>
