@@ -61,6 +61,13 @@ test('accounts and two free generations against isolated local PostgreSQL', asyn
     assert.equal((await request('/api/me', null, jwt.sign({userId:'1'},secret,{expiresIn:-1}))).status,401);
     assert.equal((await request('/api/me', null, jwt.sign({userId:{}},secret))).status,401);
   });
+  await t.test('existing accounts with legacy long bcrypt passwords can still log in', async () => {
+    const legacyEmail=`legacy-${Date.now()}@example.invalid`;
+    const legacyPassword='я'.repeat(40);
+    const hash=await require('bcryptjs').hash(legacyPassword,12);
+    await pool.query('INSERT INTO users (email,password_hash) VALUES ($1,$2)',[legacyEmail,hash]);
+    assert.equal((await request('/api/login',{email:legacyEmail,password:legacyPassword})).status,200);
+  });
   await t.test('unauthenticated generation and invalid payload never call provider', async () => {
     assert.equal((await request('/api/generate',input)).status,401);
     assert.equal((await request('/api/generate',{image:'bad',prompt:'x'},token)).status,400);

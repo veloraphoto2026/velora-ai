@@ -1,6 +1,9 @@
 require("dotenv").config();
 const express = require("express");
-const cors = require("cors");
+const helmet = require("helmet");
+const { rateLimit } = require("express-rate-limit");
+const { readFileSync } = require("node:fs");
+const { createHash } = require("node:crypto");
 const Replicate = require("replicate");
 const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
@@ -18,12 +21,40 @@ function validImage(image) {
     : data.length >= 3 && data[0] === 255 && data[1] === 216 && data[2] === 255;
 }
 
-function createApp({ pool, replicate, jwtSecret, generationEnabled = false }) {
+function createApp({ pool, replicate, jwtSecret, generationEnabled = false, rateLimits = {}, trustProxyHops = 0 }) {
   if (!jwtSecret) throw new Error("JWT_SECRET is required");
   const app = express();
 
-  app.use(cors());
-  app.use(express.json({ limit: "15mb" }));
+  if (![0, 1].includes(trustProxyHops)) throw new Error("TRUST_PROXY_HOPS must be 0 or 1");
+  app.set("trust proxy", trustProxyHops);
+  const html = readFileSync(path.join(__dirname, "index.html"), "utf8");
+  const scriptHashes = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match =>
+    "'sha256-" + createHash("sha256").update(match[1]).digest("base64") + "'"
+  );
+  app.use(helmet({
+    frameguard: { action: "deny" },
+    referrerPolicy: { policy: "no-referrer" },
+    contentSecurityPolicy: { directives: {
+      scriptSrc: ["'self'", ...scriptHashes],
+      scriptSrcAttr: ["'none'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "blob:", "https:"],
+      connectSrc: ["'self'"],
+      formAction: ["'self'"],
+      frameAncestors: ["'none'"],
+      upgradeInsecureRequests: null
+    } }
+  }));
+  app.use("/api", (req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
+  const limiter = (limit, windowMs) => rateLimit({
+    limit, windowMs, standardHeaders: "draft-8", legacyHeaders: false,
+    message: { success: false, error: "Слишком много запросов. Попробуйте позже" }
+  });
+  // Applied before JSON parsing and bcrypt to bound repeated expensive requests.
+  app.use("/api/register", limiter(rateLimits.register ?? 10, 60 * 60 * 1000));
+  app.use("/api/login", limiter(rateLimits.login ?? 20, 15 * 60 * 1000));
+  app.use("/api/generate", limiter(rateLimits.generate ?? 20, 60 * 1000));
+  app.use(express.json({ limit: "12mb" }));
 
   // CREATE USERS TABLE
 
@@ -49,17 +80,18 @@ function createApp({ pool, replicate, jwtSecret, generationEnabled = false }) {
   // WEBSITE
 
   app.get("/", (req, res) => {
-    res.sendFile(path.join(__dirname, "index.html"));
+    res.type("html").send(html);
   });
 
   // HEALTH CHECK
 
-  app.get("/api/health", (req, res) => {
-    res.json({
-      success: true,
-      service: "Velora AI",
-      status: "running"
-    });
+  app.get("/api/health", async (req, res) => {
+    try {
+      await pool.query("SELECT 1");
+      res.json({ success: true, service: "Velora AI", status: "running" });
+    } catch {
+      res.status(503).json({ success: false, status: "unavailable" });
+    }
   });
 
   // REGISTER
@@ -124,7 +156,7 @@ function createApp({ pool, replicate, jwtSecret, generationEnabled = false }) {
       if (error.code === "23505") {
         return res.status(409).json({ success: false, error: "Этот email уже зарегистрирован" });
       }
-      console.error("Register error:", error.message);
+      console.error("Register error:", error.code || "request_failed");
 
       res.status(500).json({
         success: false,
@@ -141,7 +173,8 @@ function createApp({ pool, replicate, jwtSecret, generationEnabled = false }) {
 
       if (
         typeof email !== "string" ||
-        typeof password !== "string"
+        typeof password !== "string" ||
+        email.length > 254 || password.length > 128
       ) {
         return res.status(400).json({
           success: false,
@@ -192,7 +225,7 @@ function createApp({ pool, replicate, jwtSecret, generationEnabled = false }) {
       });
 
     } catch (error) {
-      console.error("Login error:", error);
+      console.error("Login error:", error.code || "request_failed");
 
       res.status(500).json({
         success: false,
@@ -261,7 +294,7 @@ function createApp({ pool, replicate, jwtSecret, generationEnabled = false }) {
       });
 
     } catch (error) {
-      console.error("Profile error:", error);
+      console.error("Profile error:", error.code || "request_failed");
 
       res.status(500).json({
         success: false,
@@ -301,7 +334,7 @@ function createApp({ pool, replicate, jwtSecret, generationEnabled = false }) {
       res.json({ success: true, image: imageUrl, credits: result.rows[0].credits });
     } catch (error) {
       if (client) await client.query("ROLLBACK").catch(() => {});
-      console.error("Generation failed:", error.message);
+      console.error("Generation failed:", error.code || "provider_or_database_error");
       res.status(502).json({ success: false, error: "Ошибка генерации. Баланс не списан" });
     } finally {
       if (client) client.release();
@@ -319,12 +352,16 @@ function createApp({ pool, replicate, jwtSecret, generationEnabled = false }) {
 
 async function start() {
   if (!process.env.JWT_SECRET) throw new Error("JWT_SECRET is required");
-  const database = new Pool({ connectionString: process.env.DATABASE_URL });
+  if (process.env.NODE_ENV === "production" && Buffer.byteLength(process.env.JWT_SECRET, "utf8") < 32) {
+    throw new Error("Production JWT_SECRET must contain at least 32 bytes");
+  }
+  const database = new Pool({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 5000, query_timeout: 10000 });
   const { app, initDatabase } = createApp({
     pool: database,
     jwtSecret: process.env.JWT_SECRET,
     replicate: new Replicate({ auth: process.env.REPLICATE_API_TOKEN }),
-    generationEnabled: Boolean(process.env.REPLICATE_API_TOKEN)
+    generationEnabled: process.env.ENABLE_GENERATION === "true" && Boolean(process.env.REPLICATE_API_TOKEN),
+    trustProxyHops: Number(process.env.TRUST_PROXY_HOPS || 0)
   });
   try {
     await initDatabase();
