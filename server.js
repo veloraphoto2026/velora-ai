@@ -159,6 +159,9 @@ app.post("/api/register", limitRequests, async (req, res) => {
   } catch (error) {
     console.error("Register error:", error);
 
+    if (error.code === "23505") {
+      return res.status(409).json({success:false,error:"Этот email уже зарегистрирован"});
+    }
     res.status(500).json({
       success: false,
       error: "Ошибка регистрации"
@@ -174,7 +177,8 @@ app.post("/api/login", limitRequests, async (req, res) => {
 
     if (
       typeof email !== "string" ||
-      typeof password !== "string"
+      typeof password !== "string" ||
+      email.length > 254 || password.length > 128
     ) {
       return res.status(400).json({
         success: false,
