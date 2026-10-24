@@ -23,17 +23,18 @@ test('registration and login handlers refresh two-credit profile; logout clears 
   }
   const saved = new Map();
   const requests = [];
+  const apiBase = 'https://velora-ai-api-4rra.onrender.com';
   const context = vm.createContext({
     document: {getElementById:element, createElement:()=>element('new-option')},
     sessionStorage: {getItem:key=>saved.get(key) || null, setItem:(key,value)=>saved.set(key,value), removeItem:key=>saved.delete(key)},
     URL, console,
     fetch: async (route, options={}) => {
       requests.push({route, options});
-      if (route === '/api/me') {
+      if (route === apiBase + '/api/me') {
         assert.equal(options.headers.Authorization, 'Bearer offline-ui-session');
         return {ok:true, json:async()=>({success:true,user:{email:'preview@example.test',credits:2}})};
       }
-      assert.ok(['/api/register','/api/login'].includes(route));
+      assert.ok([apiBase + '/api/register',apiBase + '/api/login'].includes(route));
       assert.deepEqual(JSON.parse(options.body), {email:'preview@example.test',password:'offline-ui-password'});
       return {ok:true, json:async()=>({success:true,token:'offline-ui-session'})};
     },
@@ -51,5 +52,5 @@ test('registration and login handlers refresh two-credit profile; logout clears 
   element('authPassword').value='offline-ui-password';
   await element('loginButton').listeners.click();
   assert.match(element('creditsStatus').textContent,/Бесплатных генераций: 2/);
-  assert.deepEqual(requests.map(r=>r.route),['/api/register','/api/me','/api/login','/api/me']);
+  assert.deepEqual(requests.map(r=>r.route),['/api/register','/api/me','/api/login','/api/me'].map(route => apiBase + route));
 });
