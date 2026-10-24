@@ -240,12 +240,13 @@ placeholder="Например: красивое вечернее платье, �
 
 <script>
 
+const API_BASE = "https://velora-ai-api-4rra.onrender.com";
 const authStatus = document.getElementById("authStatus");
 const creditsStatus = document.getElementById("creditsStatus");
 let authToken = sessionStorage.getItem("velora_token");
 async function refreshProfile() {
   if (!authToken) { creditsStatus.textContent = ""; return; }
-  const response = await fetch("/api/me", { headers: { Authorization: "Bearer " + authToken } });
+  const response = await fetch(API_BASE + "/api/me", { headers: { Authorization: "Bearer " + authToken } });
   if (!response.ok) { authToken = null; sessionStorage.removeItem("velora_token"); throw new Error("Войди в аккаунт повторно"); }
   const data = await response.json();
   creditsStatus.textContent = "Аккаунт: " + data.user.email + " · Бесплатных генераций: " + data.user.credits;
@@ -256,7 +257,7 @@ async function authAction(endpoint) {
   const password = document.getElementById("authPassword").value;
   authStatus.textContent = "Подключаемся...";
   try {
-    const response = await fetch(endpoint, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({email,password}) });
+    const response = await fetch(API_BASE + endpoint, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({email,password}) });
     const data = await response.json();
     if (!response.ok || !data.token) throw new Error(data.error || "Ошибка авторизации");
     authToken = data.token;
@@ -400,7 +401,7 @@ document.getElementById("generate").addEventListener("click", async () => {
       "Preserve the person's facial identity and recognizable features."
     ].filter(Boolean).join(" ");
 
-    const response = await fetch("/api/generate", {
+    const response = await fetch(API_BASE + "/api/generate", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
