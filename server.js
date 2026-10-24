@@ -78,6 +78,7 @@ async function initDatabase() {
     status TEXT NOT NULL CHECK (status IN ('reserved','completed','failed')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
+  await pool.query("CREATE UNIQUE INDEX IF NOT EXISTS one_reserved_job_per_user ON generation_jobs (user_id) WHERE status = 'reserved'");
   console.log("Velora AI database ready");
 }
 
