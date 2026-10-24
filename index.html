@@ -237,6 +237,8 @@ placeholder="Например: красивое вечернее платье, �
 </footer>
 
 <script>
+const API_BASE = "https://velora-ai-api-4rra.onrender.com";
+const apiUrl = path => API_BASE + path;
 
 const styles = {
   real: [
@@ -261,7 +263,7 @@ async function authRequest(endpoint) {
   const email = document.getElementById("email").value.trim();
   const password = document.getElementById("password").value;
   try {
-    const response = await fetch(endpoint, {
+    const response = await fetch(apiUrl(endpoint), {
       method: "POST", headers: {"Content-Type":"application/json"},
       body: JSON.stringify({email,password})
     });
@@ -276,7 +278,7 @@ async function loadAccount() {
   const token = sessionStorage.getItem("veloraToken");
   if (!token) return;
   try {
-    const response = await fetch("/api/me", {headers:{"Authorization":"Bearer "+token}});
+    const response = await fetch(apiUrl("/api/me"), {headers:{"Authorization":"Bearer "+token}});
     if (!response.ok) throw new Error("Требуется повторный вход");
     const data = await response.json();
     document.getElementById("accountInfo").textContent =
@@ -408,7 +410,7 @@ document.getElementById("generate").addEventListener("click", async () => {
       "Preserve the person's facial identity and recognizable features."
     ].filter(Boolean).join(" ");
 
-    const response = await fetch("/api/generate", {
+    const response = await fetch(apiUrl("/api/generate"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
