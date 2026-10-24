@@ -179,7 +179,7 @@ footer {
 <div class="panel" id="profilePanel" hidden>
   <p id="profileEmail"></p>
   <p id="profileCredits"></p>
-  <p class="note">Баланс пока отображается для ознакомления. Списание бесплатных генераций будет подключено после серверной проверки.</p>
+  <p class="note">Каждая успешная генерация списывает одну бесплатную попытку. Если генерация завершится ошибкой, попытка возвращается.</p>
   <button type="button" id="logout">Выйти</button>
 </div>
 <h2>ИИ-фотостудия</h2>
@@ -386,6 +386,7 @@ photo.addEventListener("change", () => {
 document.getElementById("generate").addEventListener("click", async () => {
   const button = document.getElementById("generate");
   const key = document.getElementById("testKey").value.trim();
+  document.getElementById("download").style.display = "none";
   const useAccount = !!sessionToken;
 
   if (!photo.files.length) {
