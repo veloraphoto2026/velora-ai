@@ -269,87 +269,45 @@ app.get("/api/me", authenticate, async (req, res) => {
 // AI PHOTO GENERATION
 // Existing test access remains available.
 
-app.post("/api/generate", async (req, res) => {
+app.post("/api/generate", authenticate, async (req, res) => {
+  const { image, prompt } = req.body || {};
+  if (typeof image !== "string" ||
+      !/^data:image\/(jpeg|png);base64,[A-Za-z0-9+/=]+$/.test(image) ||
+      Buffer.byteLength(image, "utf8") > 12 * 1024 * 1024 ||
+      typeof prompt !== "string" || !prompt.trim() || prompt.length > 1500) {
+    return res.status(400).json({ success: false, error: "Проверь фотографию и описание" });
+  }
+
+  // Reserve a credit atomically before invoking the paid model.
+  const client = await pool.connect();
+  let reserved = false;
   try {
-    const secret = process.env.VELORA_TEST_KEY;
-
-    if (!secret) {
-      return res.status(503).json({
-        success: false,
-        error: "Тестовый доступ не настроен"
-      });
-    }
-
-    const providedKey = req.get("x-velora-key");
-
-    if (providedKey !== secret) {
-      return res.status(401).json({
-        success: false,
-        error: "Неверный тестовый ключ"
-      });
-    }
-
-    const { image, prompt } = req.body || {};
-
-    if (
-      typeof image !== "string" ||
-      !(
-        image.startsWith("data:image/jpeg;base64,") ||
-        image.startsWith("data:image/png;base64,")
-      )
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: "Необходима фотография JPEG или PNG"
-      });
-    }
-
-    if (
-      typeof prompt !== "string" ||
-      !prompt.trim() ||
-      prompt.length > 1500
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: "Некорректное описание фотографии"
-      });
-    }
-
-    const output = await replicate.run(
-      "black-forest-labs/flux-kontext-pro",
-      {
-        input: {
-          prompt: prompt.trim(),
-          input_image: image,
-          output_format: "jpg",
-          aspect_ratio: "match_input_image"
-        }
-      }
+    const debit = await client.query(
+      "UPDATE users SET credits = credits - 1 WHERE id = $1 AND credits > 0 RETURNING credits",
+      [req.userId]
     );
-
-    const imageUrl =
-      typeof output === "string"
-        ? output
-        : typeof output?.url === "function"
-          ? output.url()
-          : null;
-
-    if (!imageUrl) {
-      throw new Error("No image URL returned");
+    if (!debit.rowCount) {
+      return res.status(402).json({ success: false, error: "Бесплатные генерации закончились" });
     }
-
-    res.json({
-      success: true,
-      image: imageUrl
+    reserved = true;
+    const output = await replicate.run("black-forest-labs/flux-kontext-pro", {
+      input: { prompt: prompt.trim(), input_image: image, output_format: "jpg", aspect_ratio: "match_input_image" }
     });
-
+    const imageUrl = typeof output === "string" ? output
+      : typeof output?.url === "function" ? output.url()
+      : Array.isArray(output) && typeof output[0] === "string" ? output[0] : null;
+    if (!imageUrl) throw new Error("No image URL returned");
+    reserved = false;
+    res.json({ success: true, image: imageUrl, credits: debit.rows[0].credits });
   } catch (error) {
     console.error("Generation error:", error);
-
-    res.status(500).json({
-      success: false,
-      error: "Ошибка генерации фотографии"
-    });
+    if (reserved) {
+      try { await client.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [req.userId]); }
+      catch (refundError) { console.error("Credit refund failed:", refundError); }
+    }
+    res.status(500).json({ success: false, error: "Ошибка генерации. Попробуй ещё раз." });
+  } finally {
+    client.release();
   }
 });
 
