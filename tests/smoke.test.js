@@ -36,3 +36,11 @@ test("only one in-flight generation per user is allowed",()=>{
   assert.match(server,/SELECT id FROM users WHERE id=\$1 FOR UPDATE/);
   assert.match(server,/status='reserved' LIMIT 1 FOR UPDATE/);
 });
+
+test("daily generation cap must be explicitly configured and enforced inside a transaction",()=>{
+  assert.match(server,/VELORA_DAILY_GENERATION_LIMIT \|\| 0/);
+  assert.match(server,/Number\.isSafeInteger\(dailyLimit\)/);
+  assert.match(server,/pg_advisory_xact_lock\(861729, 1\)/);
+  assert.match(server,/dailyUsage\.rows\[0\]\.total >= dailyLimit/);
+  assert.match(server,/Дневной лимит генераций достигнут/);
+});
