@@ -460,7 +460,11 @@ document.getElementById("generate").addEventListener("click", async () => {
 
     status.textContent = "✅ Фотография готова!";
     document.getElementById("download").style.display = "block";
-    if (useAccount) await loadProfile();
+    if (useAccount) {
+      // The image is already generated; a temporary profile error must not hide success.
+      await loadProfile();
+      status.textContent = "✅ Фотография готова!";
+    }
 
   } catch (error) {
     status.textContent = "Ошибка: " + error.message;
