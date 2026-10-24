@@ -372,6 +372,7 @@ document.getElementById("generate").addEventListener("click", async () => {
     return;
   }
 
+  document.getElementById("download").style.display = "none";
   button.disabled = true;
   status.textContent = "✨ Создаём фотографию. Подожди немного...";
 
@@ -419,6 +420,7 @@ document.getElementById("generate").addEventListener("click", async () => {
     output.src = result.image;
     output.style.display = "block";
 
+    document.getElementById("download").style.display = "block";
     status.textContent = "✅ Фотография готова!";
     await refreshProfile();
 
@@ -431,7 +433,10 @@ document.getElementById("generate").addEventListener("click", async () => {
 });
 
 document.getElementById("download").addEventListener("click", () => {
-  status.textContent = "Сохранение станет доступно после подключения ИИ.";
+  const src = document.getElementById("result").src;
+  if (!src) return;
+  window.open(src, "_blank", "noopener,noreferrer");
+  status.textContent = "Фотография открыта. На iPhone удерживай изображение и выбери «Сохранить в Фото».";
 });
 
 </script>
