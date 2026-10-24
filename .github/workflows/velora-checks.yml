@@ -1,0 +1,26 @@
+name: Velora code checks
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [feature/auth-two-free-generations]
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check server JavaScript
+        run: node --check server.js
+      - name: Check embedded website JavaScript
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const html = fs.readFileSync('index.html', 'utf8');
+          const script = html.match(/<script>([\s\S]*?)<\/script>/);
+          if (!script) throw new Error('Website script not found');
+          new Function(script[1]);
+          if (script[1].includes('if (!key)')) throw new Error('Legacy key reference remains');
+          NODE
