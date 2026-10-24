@@ -181,7 +181,7 @@ footer {
 <div class="panel">
 
 <label for="photo">📸 Загрузи фотографию</label>
-<input type="file" id="photo" accept="image/jpeg,image/png">
+<input type="file" id="photo" accept="image/jpeg,image/png,image/heic,image/heif">\n<p class="note">На iPhone выбери фото в формате JPEG или PNG. Если фото HEIC, предварительно преобразуй его в JPEG.</p>
 
 <img id="preview" class="preview" alt="Исходная фотография">
 
@@ -208,7 +208,7 @@ placeholder="Например: красивое вечернее платье, �
 
 <p class="note">
   Тестовая версия. Генерация будет доступна после безопасного включения сервиса.
-  Загруженная фотография остаётся в браузере.
+  До нажатия «Создать фотографию» файл остаётся на устройстве. При генерации фото передаётся серверу Velora AI и сервису Replicate для обработки. Не загружай чужие фотографии без разрешения.
 </p>
 
 <div id="status" class="status" role="status" aria-live="polite"></div>
@@ -331,7 +331,7 @@ photo.addEventListener("change", () => {
   }
 
   if (!["image/jpeg", "image/png"].includes(file.type)) {
-    status.textContent = "Выбери фотографию JPEG или PNG.";
+    status.textContent = "Поддерживаются JPEG и PNG. Фото HEIC с iPhone нужно преобразовать в JPEG.";
     photo.value = "";
     return;
   }
