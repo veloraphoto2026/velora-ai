@@ -314,6 +314,11 @@ app.post("/api/generate", limitRequests, authenticate, async (req, res) => {
   if (!process.env.REPLICATE_API_TOKEN || !process.env.DATABASE_URL || !process.env.JWT_SECRET) {
     return res.status(503).json({success:false,error:"Сервис пока не настроен"});
   }
+  // Require an explicit owner-configured global daily cap before any paid provider call.
+  const dailyLimit = Number(process.env.VELORA_DAILY_GENERATION_LIMIT || 0);
+  if (!Number.isSafeInteger(dailyLimit) || dailyLimit < 1 || dailyLimit > 1000) {
+    return res.status(503).json({success:false,error:"Дневной лимит генераций не настроен"});
+  }
   const {image,prompt} = req.body || {};
   if (typeof image !== "string" || !/^data:image\/(jpeg|png);base64,[A-Za-z0-9+/=]+$/.test(image) ||
       image.length > 11 * 1024 * 1024 || typeof prompt !== "string" ||
@@ -327,6 +332,14 @@ app.post("/api/generate", limitRequests, authenticate, async (req, res) => {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(861729, 1)");
+      const dailyUsage = await client.query(
+        "SELECT COUNT(*)::integer AS total FROM generation_jobs WHERE created_at >= CURRENT_DATE AND status IN ('reserved','completed')"
+      );
+      if (dailyUsage.rows[0].total >= dailyLimit) {
+        await client.query("ROLLBACK");
+        return res.status(429).json({success:false,error:"Дневной лимит генераций достигнут"});
+      }
       await client.query("SELECT id FROM users WHERE id=$1 FOR UPDATE",[req.userId]);
       const active = await client.query("SELECT id FROM generation_jobs WHERE user_id=$1 AND status='reserved' LIMIT 1 FOR UPDATE",[req.userId]);
       if (active.rowCount) {
