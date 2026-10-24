@@ -150,5 +150,35 @@ test('accounts and two free generations against isolated local PostgreSQL', asyn
     await wait(()=>restored.window.document.getElementById('credits').textContent==='0');
     assert.equal(restored.window.document.getElementById('account').hidden,false);
     assert.deepEqual(errors,[]);
+  });  await t.test('late profile responses cannot log out a new session or revive a logged-out account',async()=>{
+    const {JSDOM}=require('jsdom');
+    const html=await (await fetch(base)).text();
+    const pending=[];
+    const dom=new JSDOM(html,{url:base,runScripts:'dangerously',beforeParse(window){
+      window.sessionStorage.setItem('veloraToken','expired-session');
+      window.fetch=(path,options)=>path==='/api/me'?new Promise(resolve=>pending.push(resolve)):fetch(new URL(path,base),options);
+    }});
+    t.after(()=>dom.window.close());
+    const doc=dom.window.document;
+    doc.getElementById('email').value=email;
+    doc.getElementById('password').value=password;
+    doc.getElementById('authForm').dispatchEvent(new dom.window.Event('submit',{cancelable:true}));
+    for(let i=0;i<100&&doc.getElementById('account').hidden;i++)await new Promise(resolve=>setTimeout(resolve,20));
+    assert.equal(doc.getElementById('account').hidden,false);
+    const newToken=dom.window.sessionStorage.getItem('veloraToken');
+    pending[0](new Response(JSON.stringify({success:false,error:'expired'}),{status:401}));
+    await new Promise(resolve=>setTimeout(resolve,25));
+    assert.equal(dom.window.sessionStorage.getItem('veloraToken'),newToken);
+    assert.equal(doc.getElementById('account').hidden,false);
+    const refresh=dom.window.refreshAccount();
+    doc.getElementById('result').src='https://example.invalid/private.png';
+    doc.getElementById('logout').click();
+    pending[1](new Response(JSON.stringify({success:true,user:{id:'1',email,credits:2}}),{status:200}));
+    await refresh;
+    assert.equal(doc.getElementById('account').hidden,true);
+    assert.equal(doc.getElementById('accountEmail').textContent,'');
+    assert.equal(doc.getElementById('result').getAttribute('src'),null);
+    assert.equal(dom.window.sessionStorage.getItem('veloraToken'),null);
   });
+
 });

@@ -1,6 +1,7 @@
 require("dotenv").config();
 const express = require("express");
 const helmet = require("helmet");
+const { initBilling, billingFromEnv, webhookHandler, mountBilling } = require("./billing");
 const { rateLimit } = require("express-rate-limit");
 const { readFileSync } = require("node:fs");
 const { createHash } = require("node:crypto");
@@ -21,7 +22,7 @@ function validImage(image) {
     : data.length >= 3 && data[0] === 255 && data[1] === 216 && data[2] === 255;
 }
 
-function createApp({ pool, replicate, jwtSecret, generationEnabled = false, rateLimits = {}, trustProxyHops = 0 }) {
+function createApp({ pool, replicate, jwtSecret, generationEnabled = false, rateLimits = {}, trustProxyHops = 0, billing = null }) {
   if (!jwtSecret) throw new Error("JWT_SECRET is required");
   const app = express();
 
@@ -54,27 +55,37 @@ function createApp({ pool, replicate, jwtSecret, generationEnabled = false, rate
   app.use("/api/register", limiter(rateLimits.register ?? 10, 60 * 60 * 1000));
   app.use("/api/login", limiter(rateLimits.login ?? 20, 15 * 60 * 1000));
   app.use("/api/generate", limiter(rateLimits.generate ?? 20, 60 * 1000));
+  app.use("/api/billing/reconcile", limiter(rateLimits.reconcile ?? 30, 60 * 1000));
+  app.use("/api/billing/checkout", limiter(rateLimits.checkout ?? 10, 15 * 60 * 1000));
+  app.use("/api/billing/webhook", limiter(rateLimits.webhook ?? 120, 60 * 1000));
+  app.post("/api/billing/webhook", express.raw({ type: "application/json", limit: "64kb" }), webhookHandler(pool, billing));
   app.use(express.json({ limit: "12mb" }));
+  mountBilling(app, pool, billing, authenticate);
 
   // CREATE USERS TABLE
 
   async function initDatabase() {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        id BIGSERIAL PRIMARY KEY,
-        email TEXT UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
-        credits INTEGER NOT NULL DEFAULT 2 CHECK (credits >= 0),
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      )
-    `);
-
-    await pool.query(`
-      ALTER TABLE users
-      ALTER COLUMN credits SET DEFAULT 2
-    `);
-
-    console.log("Velora AI database ready");
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(8632046217)");
+      await client.query(`CREATE TABLE IF NOT EXISTS users (
+        id BIGSERIAL PRIMARY KEY, email TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL,
+        credits INTEGER NOT NULL DEFAULT 2 CHECK (credits >= 0), created_at TIMESTAMPTZ DEFAULT NOW()
+      )`);
+      await client.query("ALTER TABLE users ALTER COLUMN credits SET DEFAULT 2");
+      await initBilling(client);
+      await client.query(`CREATE TABLE IF NOT EXISTS generation_receipts (
+        user_id BIGINT NOT NULL REFERENCES users(id), request_key UUID NOT NULL,
+        input_hash TEXT NOT NULL, image_url TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY(user_id,request_key)
+      )`);
+      await client.query("COMMIT");
+      console.log("Velora AI database ready");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally { client.release(); }
   }
 
   // WEBSITE
@@ -134,7 +145,7 @@ function createApp({ pool, replicate, jwtSecret, generationEnabled = false, rate
       const result = await pool.query(
         `INSERT INTO users (email, password_hash)
          VALUES ($1, $2)
-         RETURNING id, email, credits`,
+         RETURNING id, email, credits, paid_credits`,
         [normalizedEmail, passwordHash]
       );
 
@@ -220,7 +231,8 @@ function createApp({ pool, replicate, jwtSecret, generationEnabled = false, rate
         user: {
           id: user.id,
           email: user.email,
-          credits: user.credits
+          credits: user.credits,
+          paid_credits: user.paid_credits
         }
       });
 
@@ -275,7 +287,7 @@ function createApp({ pool, replicate, jwtSecret, generationEnabled = false, rate
   app.get("/api/me", authenticate, async (req, res) => {
     try {
       const result = await pool.query(
-        `SELECT id, email, credits, created_at
+        `SELECT id, email, credits, paid_credits, created_at
          FROM users
          WHERE id = $1`,
         [req.userId]
@@ -310,6 +322,11 @@ function createApp({ pool, replicate, jwtSecret, generationEnabled = false, rate
         typeof prompt !== "string" || !prompt.trim() || prompt.length > 1500) {
       return res.status(400).json({ success: false, error: "Нужны фотография JPEG/PNG до 8 МБ и описание до 1500 символов" });
     }
+    const requestKey = req.get("idempotency-key");
+    if (requestKey && !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestKey)) {
+      return res.status(400).json({success:false,error:"Некорректный ключ запроса"});
+    }
+    const inputHash = createHash("sha256").update(JSON.stringify({image,prompt:prompt.trim()})).digest("hex");
     if (!generationEnabled) {
       return res.status(503).json({ success: false, error: "Генерация временно недоступна" });
     }
@@ -318,10 +335,18 @@ function createApp({ pool, replicate, jwtSecret, generationEnabled = false, rate
       client = await pool.connect();
       await client.query("BEGIN");
       // Serialize requests for one account so simultaneous requests cannot overspend.
-      const { rows } = await client.query("SELECT credits FROM users WHERE id=$1 FOR UPDATE", [req.userId]);
-      if (!rows.length || rows[0].credits <= 0) {
+      const { rows } = await client.query("SELECT credits, paid_credits FROM users WHERE id=$1 FOR UPDATE", [req.userId]);
+      if (rows.length && requestKey) {
+        const receipt = (await client.query("SELECT input_hash,image_url FROM generation_receipts WHERE user_id=$1 AND request_key=$2", [req.userId,requestKey])).rows[0];
+        if (receipt) {
+          await client.query("ROLLBACK");
+          if (receipt.input_hash !== inputHash) return res.status(409).json({success:false,error:"Ключ уже использован для другого запроса"});
+          return res.json({success:true,image:receipt.image_url,credits:rows[0].credits,paid_credits:rows[0].paid_credits});
+        }
+      }
+      if (!rows.length || rows[0].credits + rows[0].paid_credits <= 0) {
         await client.query("ROLLBACK");
-        return res.status(rows.length ? 402 : 404).json({ success: false, error: rows.length ? "Бесплатные генерации закончились" : "Пользователь не найден" });
+        return res.status(rows.length ? 402 : 404).json({ success: false, code: rows.length ? "PAYMENT_REQUIRED" : "USER_NOT_FOUND", error: rows.length ? "Бесплатные генерации закончились. Можно приобрести дополнительную генерацию" : "Пользователь не найден" });
       }
       const output = await replicate.run("black-forest-labs/flux-kontext-pro", {
         signal: AbortSignal.timeout(120000),
@@ -329,12 +354,16 @@ function createApp({ pool, replicate, jwtSecret, generationEnabled = false, rate
       });
       const imageUrl = typeof output === "string" ? output : typeof output?.url === "function" ? String(output.url()) : null;
       if (!imageUrl || new URL(imageUrl).protocol !== "https:") throw new Error("Invalid generation output");
-      const result = await client.query("UPDATE users SET credits=credits-1 WHERE id=$1 RETURNING credits", [req.userId]);
+      const result = await client.query(`UPDATE users SET
+        credits=CASE WHEN credits>0 THEN credits-1 ELSE credits END,
+        paid_credits=CASE WHEN credits>0 THEN paid_credits ELSE paid_credits-1 END
+        WHERE id=$1 RETURNING credits,paid_credits`, [req.userId]);
+      if (requestKey) await client.query("INSERT INTO generation_receipts (user_id,request_key,input_hash,image_url) VALUES ($1,$2,$3,$4)", [req.userId,requestKey,inputHash,imageUrl]);
       await client.query("COMMIT");
-      res.json({ success: true, image: imageUrl, credits: result.rows[0].credits });
+      res.json({ success: true, image: imageUrl, credits: result.rows[0].credits, paid_credits: result.rows[0].paid_credits });
     } catch (error) {
       if (client) await client.query("ROLLBACK").catch(() => {});
-      console.error("Generation failed:", error.code || "provider_or_database_error");
+      console.error("Generation failed:", error.code || error.name);
       res.status(502).json({ success: false, error: "Ошибка генерации. Баланс не списан" });
     } finally {
       if (client) client.release();
@@ -361,7 +390,8 @@ async function start() {
     jwtSecret: process.env.JWT_SECRET,
     replicate: new Replicate({ auth: process.env.REPLICATE_API_TOKEN }),
     generationEnabled: process.env.ENABLE_GENERATION === "true" && Boolean(process.env.REPLICATE_API_TOKEN),
-    trustProxyHops: Number(process.env.TRUST_PROXY_HOPS || 0)
+    trustProxyHops: Number(process.env.TRUST_PROXY_HOPS || 0),
+    billing: billingFromEnv(process.env)
   });
   try {
     await initDatabase();

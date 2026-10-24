@@ -10,9 +10,19 @@ const { createApp } = require('../server');
   const pool = new Pool({ connectionString: url.toString() });
   let server, browser;
   let calls = 0;
+  const payments = new Map();
+  const billing = { amount: 12345, currency: 'RUB', origin: 'https://example.invalid', testMode: true, client: {
+    createPayment: async body => {
+      const id = require('crypto').randomUUID();
+      const payment = { id, status: 'pending', paid: false, test: true, amount: body.amount, metadata: body.metadata,
+        confirmation: { confirmation_url: 'https://yoomoney.ru/checkout/payments/v2/contract?orderId=' + id } };
+      payments.set(id, payment); return payment;
+    },
+    getPayment: async id => payments.get(id)
+  }};
   try {
     const { app, initDatabase } = createApp({
-      pool, jwtSecret: require('crypto').randomBytes(48).toString('hex'), generationEnabled: true,
+      pool, billing, jwtSecret: require('crypto').randomBytes(48).toString('hex'), generationEnabled: true,
       replicate: { run: async () => { calls++; return 'https://example.invalid/generated.png'; } }
     });
     await initDatabase();
@@ -27,6 +37,7 @@ const { createApp } = require('../server');
     const base = 'http://127.0.0.1:' + server.address().port;
     const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=', 'base64');
     await page.route('**/*', route => route.request().url().startsWith(base) ? route.continue() :
+      route.request().url().startsWith('https://yoomoney.ru/') ? route.fulfill({contentType:'text/html',body:'<p>Local payment provider fixture</p>'}) :
       route.request().url() === 'https://example.invalid/generated.png' ? route.fulfill({ contentType: 'image/png', body: png }) : route.abort());
     await page.goto(base);
     const email = `chromium-${Date.now()}@example.invalid`;
@@ -55,7 +66,22 @@ const { createApp } = require('../server');
     await page.locator('#account').waitFor({ state: 'visible' });
     assert.equal(await page.locator('#credits').textContent(), '0');
     assert.deepEqual(errors, []);
-    console.log('Chromium: registration, login/logout, two generations, balance persistence, mobile width and CSP passed. No external provider calls.');
+    await page.locator('#billingPanel').waitFor({state:'visible'});
+    await page.waitForFunction(()=>!document.getElementById('checkout').disabled);
+    assert.match(await page.locator('#checkout').textContent(),/123,45/);
+    await Promise.all([page.waitForURL('https://yoomoney.ru/**'),page.locator('#checkout').click()]);
+    const payment=[...payments.values()][0];assert.ok(payment);
+    payment.status='succeeded';payment.paid=true;
+    // Deliberately omit the webhook: returning to the app must reconcile via provider API.
+    await page.goto(base+'/?payment=return');
+    await page.waitForFunction(()=>document.getElementById('paidCredits').textContent==='1');
+    await page.locator('#photo').setInputFiles({name:'photo.png',mimeType:'image/png',buffer:png});
+    await page.locator('#generate').click();
+    await page.waitForFunction(()=>document.getElementById('paidCredits').textContent==='0'&&!document.getElementById('generate').disabled);
+    assert.equal(calls,3);
+    assert.ok(!await page.evaluate(()=>sessionStorage.getItem('veloraCheckout:'+currentUser.id)));
+    assert.deepEqual(errors,[]);
+    console.log('Chromium: registration, two free generations, YooKassa checkout/return, verified paid credit, paid generation, logout/login, mobile layout and CSP passed. Providers are local fixtures.');
   } finally {
     if (browser) await browser.close();
     if (server) await new Promise(resolve => server.close(resolve));

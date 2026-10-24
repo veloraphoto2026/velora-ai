@@ -179,6 +179,13 @@ footer {
 <div id="account" hidden>
 <p id="accountEmail"></p>
 <p>Осталось бесплатных генераций: <strong id="credits"></strong></p>
+<p>Оплаченных генераций: <strong id="paidCredits">0</strong></p>
+<div id="billingPanel" hidden>
+<p>Бесплатный лимит использован. Можно приобрести дополнительную генерацию.</p>
+<button id="checkout" type="button" disabled>Оплатить 1 генерацию</button>
+<p id="billingStatus" class="note" role="status"></p>
+</div>
+<button id="refreshBalance" type="button">Обновить баланс</button>
 <button id="logout" type="button">Выйти</button>
 </div>
 <p id="accountStatus" class="status" role="status" aria-live="polite"></p>
@@ -244,6 +251,7 @@ placeholder="Например: красивое вечернее платье, �
 
 let token = sessionStorage.getItem("veloraToken");
 let currentUser = null;
+let pendingGeneration = null;
 const accountStatus = document.getElementById("accountStatus");
 function showAccount(user) {
   currentUser = user;
@@ -251,27 +259,85 @@ function showAccount(user) {
   document.getElementById("account").hidden = !user;
   document.getElementById("accountEmail").textContent = user?.email || "";
   document.getElementById("credits").textContent = user?.credits ?? "";
+  document.getElementById("paidCredits").textContent = user?.paid_credits ?? 0;
+  document.getElementById("billingPanel").hidden = !user || user.credits > 0;
+  if (user) refreshBilling();
 }
 function logout() {
   token = null;
+  pendingGeneration = null;
   sessionStorage.removeItem("veloraToken");
   showAccount(null);
+  const output = document.getElementById("result");
+  output.removeAttribute("src");
+  output.style.display = "none";
+  document.getElementById("photo").value = "";
+  document.getElementById("preview").removeAttribute("src");
+  document.getElementById("preview").style.display = "none";
+  if (previewUrl) { URL.revokeObjectURL(previewUrl); previewUrl = null; }
 }
 async function api(url, options = {}) {
+  const requestToken = token;
   const response = await fetch(url, {
     ...options,
-    headers: { "Content-Type": "application/json", ...(token ? { Authorization: "Bearer " + token } : {}), ...options.headers }
+    headers: { "Content-Type": "application/json", ...(requestToken ? { Authorization: "Bearer " + requestToken } : {}), ...options.headers }
   });
   const data = await response.json();
-  if (response.status === 401 && token) logout();
+  if (response.status === 401 && token === requestToken) logout();
   if (!response.ok) throw new Error(data.error || "Ошибка запроса");
   return data;
 }
 async function refreshAccount() {
   if (!token) return;
-  try { showAccount((await api("/api/me")).user); }
-  catch (error) { accountStatus.textContent = error.message; }
+  const requestToken = token;
+  try { const data = await api("/api/me"); if (token === requestToken) showAccount(data.user); }
+  catch (error) { if (token === requestToken) accountStatus.textContent = error.message; }
 }
+async function refreshBilling() {
+  const requestToken = token;
+  const button = document.getElementById("checkout");
+  button.disabled = true;
+  try {
+    const keyName = "veloraCheckout:" + currentUser.id;
+    const requestKey = sessionStorage.getItem(keyName);
+    if (requestKey) {
+      try { await api("/api/billing/reconcile", { method: "POST", body: JSON.stringify({ request_key: requestKey }) }); }
+      catch { if (token !== requestToken) return; }
+    }
+    const data = await api("/api/billing" + (requestKey ? "?request_key=" + encodeURIComponent(requestKey) : ""));
+    if (token !== requestToken) return;
+    if (data.last_order_paid) { sessionStorage.removeItem(keyName); await refreshAccount(); }
+    button.disabled = !data.enabled;
+    if (data.enabled) {
+      const format = new Intl.NumberFormat("ru-RU", { style: "currency", currency: data.currency });
+      const price = format.format(data.amount / (10 ** format.resolvedOptions().maximumFractionDigits));
+      button.textContent = (data.test_mode ? "Тестовая оплата — " : "Оплатить 1 генерацию — ") + price;
+    }
+    document.getElementById("billingStatus").textContent = data.enabled
+      ? "Оплата на защищённой странице провайдера. Баланс пополнится после подтверждения платежа."
+      : "Оплата пока недоступна. Деньги не списываются.";
+  } catch (error) { if (token === requestToken) document.getElementById("billingStatus").textContent = error.message; }
+}
+document.getElementById("checkout").addEventListener("click", async () => {
+  if (!token || !currentUser) return;
+  const requestToken = token;
+  const keyName = "veloraCheckout:" + currentUser.id;
+  let key = sessionStorage.getItem(keyName);
+  if (!key) { key = crypto.randomUUID(); sessionStorage.setItem(keyName, key); }
+  const button = document.getElementById("checkout");
+  button.disabled = true;
+  try {
+    const data = await api("/api/billing/checkout", { method: "POST", headers: { "Idempotency-Key": key } });
+    if (token !== requestToken) return;
+    const url = new URL(data.url);
+    if (url.protocol !== "https:" || !["yoomoney.ru", "yookassa.ru"].includes(url.hostname)) throw new Error("Некорректный адрес оплаты");
+    window.location.assign(url.href);
+  } catch (error) {
+    if (token === requestToken) document.getElementById("billingStatus").textContent = error.message;
+    button.disabled = false;
+  }
+});
+document.getElementById("refreshBalance").addEventListener("click", refreshAccount);
 async function authenticateAccount(path) {
   const form = document.getElementById("authForm");
   if (!form.reportValidity()) return;
@@ -380,7 +446,7 @@ document.getElementById("generate").addEventListener("click", async () => {
     status.textContent = "Сначала войдите в аккаунт";
     return;
   }
-  if (currentUser.credits <= 0) {
+  if (currentUser.credits + (currentUser.paid_credits || 0) <= 0) {
     status.textContent = "Бесплатные генерации закончились";
     return;
   }
@@ -403,6 +469,7 @@ document.getElementById("generate").addEventListener("click", async () => {
     return;
   }
 
+  const generationToken = token;
   button.disabled = true;
   status.textContent = "✨ Создаём фотографию. Подожди немного...";
 
@@ -414,6 +481,7 @@ document.getElementById("generate").addEventListener("click", async () => {
       reader.readAsDataURL(file);
     });
 
+    if (token !== generationToken) return;
     const wishes = document.getElementById("prompt").value.trim();
 
     const description =
@@ -428,11 +496,15 @@ document.getElementById("generate").addEventListener("click", async () => {
       "Preserve the person's facial identity and recognizable features."
     ].filter(Boolean).join(" ");
 
+    if (!pendingGeneration || pendingGeneration.image !== image || pendingGeneration.prompt !== fullPrompt || pendingGeneration.token !== generationToken) {
+      pendingGeneration = { image, prompt: fullPrompt, token: generationToken, key: crypto.randomUUID() };
+    }
     const response = await fetch("/api/generate", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": "Bearer " + token
+        "Authorization": "Bearer " + generationToken,
+        "Idempotency-Key": pendingGeneration.key
       },
       body: JSON.stringify({
         image,
@@ -441,21 +513,24 @@ document.getElementById("generate").addEventListener("click", async () => {
     });
 
     const result = await response.json();
+    if (token !== generationToken) return;
     if (response.status === 401) logout();
+    if (response.status === 402) await refreshAccount();
 
     if (!response.ok || !result.success || !result.image) {
       throw new Error(result.error || "Ошибка генерации");
     }
 
+    pendingGeneration = null;
     const output = document.getElementById("result");
     output.src = result.image;
     output.style.display = "block";
-    await refreshAccount();
+    if (currentUser) showAccount({ ...currentUser, credits: result.credits, paid_credits: result.paid_credits });
 
     status.textContent = "✅ Фотография готова!";
 
   } catch (error) {
-    status.textContent = "Ошибка: " + error.message;
+    if (token === generationToken) status.textContent = "Ошибка: " + error.message;
   } finally {
     button.disabled = false;
   }
