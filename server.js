@@ -8,7 +8,8 @@ const path = require("path");
 
 const app = express();
 
-// Same-origin browser requests do not require permissive CORS.
+// Restrict cross-origin requests to the separate Velora static website.
+app.use(cors({ origin: "https://velora-ai-wyp6.onrender.com" }));
 app.use(express.json({ limit: "15mb" }));
 
 const replicate = new Replicate({
