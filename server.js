@@ -27,9 +27,9 @@ app.use((req, res, next) => {
 // No wildcard CORS: frontend and API are served from the same origin.
 app.use(express.json({ limit: "15mb" }));
 
-const replicate = new Replicate({
-  auth: process.env.REPLICATE_API_TOKEN
-});
+const replicate = process.env.REPLICATE_API_TOKEN
+  ? new Replicate({ auth: process.env.REPLICATE_API_TOKEN })
+  : null;
 
 // DATABASE
 
@@ -59,7 +59,8 @@ async function initDatabase() {
   console.log("Velora AI database ready");
 }
 
-initDatabase().catch(error => {
+let databaseReady = false;
+initDatabase().then(() => { databaseReady = true; }).catch(error => {
   console.error("Database initialization failed:", error);
 });
 
@@ -75,8 +76,17 @@ app.get("/api/health", (req, res) => {
   res.json({
     success: true,
     service: "Velora AI",
-    status: "running"
+    status: databaseReady ? "running" : "initializing",
+    databaseReady
   });
+});
+
+// Reject database-dependent requests until initialization has completed.
+app.use("/api", (req, res, next) => {
+  if (!databaseReady) {
+    return res.status(503).json({ success: false, error: "База данных пока недоступна" });
+  }
+  next();
 });
 
 // REGISTER
@@ -274,7 +284,7 @@ app.get("/api/me", authenticate, async (req, res) => {
 
 // Authenticated generation: disabled until explicitly enabled on isolated staging.
 app.post("/api/generate", authenticate, async (req, res) => {
-  if (process.env.ENABLE_GENERATION !== "true" || !process.env.REPLICATE_API_TOKEN) {
+  if (process.env.ENABLE_GENERATION !== "true" || !replicate) {
     return res.status(503).json({ success: false, error: "Генерация пока отключена" });
   }
   const { image, prompt } = req.body || {};
