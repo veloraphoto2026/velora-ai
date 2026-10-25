@@ -64,7 +64,17 @@ showAccount(true);$("password").value="";
 $("logout").onclick=()=>{token="";currentEmail="";sessionStorage.removeItem("velora_token");sessionStorage.removeItem("velora_email");$("credits").textContent="—";showAccount(false)};
 $("photo").onchange=()=>{if(previewUrl)URL.revokeObjectURL(previewUrl);$("preview").style.display="none";const f=$("photo").files[0];if(!f)return;if(!["image/jpeg","image/png"].includes(f.type)||f.size>8*1024*1024){$("status").textContent="Нужен JPEG/PNG не больше 8 МБ";$("photo").value="";return}previewUrl=URL.createObjectURL(f);$("preview").src=previewUrl;$("preview").style.display="block";$("status").textContent="Фото загружено"};
 function renderHistory(){const el=$("history");el.replaceChildren();let items=[];try{items=JSON.parse(localStorage.getItem("velora_history_"+currentEmail)||"[]")}catch{};items.forEach(url=>{const a=document.createElement("a");a.href=url;a.target="_blank";a.rel="noopener noreferrer";const img=document.createElement("img");img.src=url;img.alt="Ранее созданное изображение";a.appendChild(img);el.appendChild(a)})}
-$("generate").onclick=()=>{$("status").textContent="Личный кабинет готов. Для безопасной генерации сначала нужно подключить на сервере проверку токена и списание кредитов. Генерация пока отключена, чтобы не раскрывать тестовый ключ и не тратить средства."};
+$("generate").onclick=async()=>{
+const f=$("photo").files[0];if(!f){$("status").textContent="Загрузи фотографию";return}
+const btn=$("generate");btn.disabled=true;$("status").textContent="Генерируем фото...";
+try{
+const image=await new Promise((ok,fail)=>{const r=new FileReader();r.onload=()=>ok(r.result);r.onerror=fail;r.readAsDataURL(f)});
+const prompt=[$("mode").value==="cartoon"?"Мультяшная обработка":"Реалистичная фотосессия",$("style").value,$("prompt").value].filter(Boolean).join(". ");
+const data=await api("/api/generate",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+token},body:JSON.stringify({image,prompt})});
+latestImage=data.image;$("result").src=latestImage;$("result").style.display="block";$("resultPanel").classList.remove("hidden");$("download").classList.remove("hidden");$("credits").textContent=data.credits;$("status").textContent="Готово!";
+}catch(e){$("status").textContent=e.message;try{const me=await api("/api/me",{headers:{"Authorization":"Bearer "+token}});$("credits").textContent=me.user.credits}catch{}}
+finally{btn.disabled=false}
+};
 $("download").onclick=()=>{if(!latestImage)return;window.open(latestImage,"_blank","noopener,noreferrer")};
 if(token&&currentEmail){api("/api/me",{headers:{"Authorization":"Bearer "+token}}).then(data=>{currentEmail=data.user.email;sessionStorage.setItem("velora_email",currentEmail);$("credits").textContent=data.user.credits;showAccount(true)}).catch(()=>{$("logout").click()})}else{showAccount(false)}
 </script></body></html>

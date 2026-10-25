@@ -267,32 +267,15 @@ app.get("/api/me", authenticate, async (req, res) => {
 });
 
 // AI PHOTO GENERATION
-// Existing test access remains available.
+// Only authenticated account requests are permitted.
 
-app.post("/api/generate", async (req, res) => {
+app.post("/api/generate", authenticate, async (req, res) => {
   try {
-    const secret = process.env.VELORA_TEST_KEY;
-
-    if (!secret) {
-      return res.status(503).json({
-        success: false,
-        error: "Тестовый доступ не настроен"
-      });
-    }
-
-    const providedKey = req.get("x-velora-key");
-
-    if (providedKey !== secret) {
-      return res.status(401).json({
-        success: false,
-        error: "Неверный тестовый ключ"
-      });
-    }
-
     const { image, prompt } = req.body || {};
 
     if (
       typeof image !== "string" ||
+      image.length > 11 * 1024 * 1024 ||
       !(
         image.startsWith("data:image/jpeg;base64,") ||
         image.startsWith("data:image/png;base64,")
@@ -315,7 +298,20 @@ app.post("/api/generate", async (req, res) => {
       });
     }
 
-    const output = await replicate.run(
+    if (!process.env.REPLICATE_API_TOKEN) {
+      return res.status(503).json({ success: false, error: "Генерация временно недоступна" });
+    }
+
+    const debit = await pool.query(
+      "UPDATE users SET credits = credits - 1 WHERE id = $1 AND credits > 0 RETURNING credits",
+      [req.userId]
+    );
+    if (!debit.rows.length) {
+      return res.status(402).json({ success: false, error: "Бесплатные генерации закончились" });
+    }
+    let output;
+    try {
+      output = await replicate.run(
       "black-forest-labs/flux-kontext-pro",
       {
         input: {
@@ -327,20 +323,27 @@ app.post("/api/generate", async (req, res) => {
       }
     );
 
+    } catch (generationError) {
+      await pool.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [req.userId]);
+      return res.status(502).json({ success: false, error: "Generation failed; credit restored" });
+    }
+    const first = Array.isArray(output) ? output[0] : output;
     const imageUrl =
-      typeof output === "string"
-        ? output
-        : typeof output?.url === "function"
-          ? output.url()
+      typeof first === "string"
+        ? first
+        : typeof first?.url === "function"
+          ? String(first.url())
           : null;
 
-    if (!imageUrl) {
-      throw new Error("No image URL returned");
+    if (!imageUrl || !imageUrl.startsWith("https://")) {
+      await pool.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [req.userId]);
+      return res.status(502).json({ success: false, error: "No image returned; credit restored" });
     }
 
     res.json({
       success: true,
-      image: imageUrl
+      image: imageUrl,
+      credits: debit.rows[0].credits
     });
 
   } catch (error) {
