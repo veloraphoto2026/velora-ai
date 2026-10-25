@@ -302,6 +302,7 @@ app.post("/api/generate", authenticate, async (req, res) => {
       return res.status(503).json({ success: false, error: "Генерация временно недоступна" });
     }
 
+    // Reserve one credit atomically; concurrent requests cannot overspend.
     const debit = await pool.query(
       "UPDATE users SET credits = credits - 1 WHERE id = $1 AND credits > 0 RETURNING credits",
       [req.userId]
@@ -309,42 +310,58 @@ app.post("/api/generate", authenticate, async (req, res) => {
     if (!debit.rows.length) {
       return res.status(402).json({ success: false, error: "Бесплатные генерации закончились" });
     }
-    let output;
-    try {
-      output = await replicate.run(
-      "black-forest-labs/flux-kontext-pro",
-      {
-        input: {
-          prompt: prompt.trim(),
-          input_image: image,
-          output_format: "jpg",
-          aspect_ratio: "match_input_image"
-        }
-      }
-    );
 
-    } catch (generationError) {
-      await pool.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [req.userId]);
-      return res.status(502).json({ success: false, error: "Generation failed; credit restored" });
-    }
-    const first = Array.isArray(output) ? output[0] : output;
-    const imageUrl =
-      typeof first === "string"
+    let completed = false;
+    try {
+      const output = await replicate.run(
+        "black-forest-labs/flux-kontext-pro",
+        {
+          input: {
+            prompt: prompt.trim(),
+            input_image: image,
+            output_format: "jpg",
+            aspect_ratio: "match_input_image"
+          }
+        }
+      );
+
+      const first = Array.isArray(output) ? output[0] : output;
+      const imageUrl = typeof first === "string"
         ? first
         : typeof first?.url === "function"
           ? String(first.url())
           : null;
 
-    if (!imageUrl || !imageUrl.startsWith("https://")) {
-      await pool.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [req.userId]);
-      return res.status(502).json({ success: false, error: "No image returned; credit restored" });
-    }
+      if (!imageUrl || !imageUrl.startsWith("https://")) {
+        return res.status(502).json({
+          success: false,
+          error: "Сервис не вернул изображение; генерация не списана"
+        });
+      }
 
-    res.json({
-      success: true,
-      image: imageUrl,
-      credits: debit.rows[0].credits
-    });
+      // Read the latest balance, not a stale value from a concurrent request.
+      const balance = await pool.query("SELECT credits FROM users WHERE id = $1", [req.userId]);
+      completed = true;
+      return res.json({
+        success: true,
+        image: imageUrl,
+        credits: balance.rows[0]?.credits ?? debit.rows[0].credits
+      });
+    } catch (generationError) {
+      console.error("Generation error:", generationError);
+      return res.status(502).json({
+        success: false,
+        error: "Генерация не удалась; кредит будет восстановлен"
+      });
+    } finally {
+      if (!completed) {
+        try {
+          await pool.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [req.userId]);
+        } catch (refundError) {
+          console.error("CRITICAL: credit refund failed for user", req.userId, refundError);
+        }
+      }
+    }
 
   } catch (error) {
     console.error("Generation error:", error);
