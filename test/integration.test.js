@@ -68,6 +68,57 @@ test("HTTP registration, login, balance and disabled generation with real Postgr
     assert.equal(disabled.status, 503);
     const unchanged = await request("/api/me", { headers: { Authorization: "Bearer " + login.body.token } });
     assert.equal(unchanged.body.user.credits, 2);
+
+    // Exercise the same transactional SQL used by generation, without calling Replicate.
+    const { Pool } = require("pg");
+    const db = new Pool({ connectionString: databaseUrl });
+    try {
+      const userId = registered.body.user.id;
+      for (let expected = 1; expected >= 0; expected--) {
+        const client = await db.connect();
+        try {
+          await client.query("BEGIN");
+          const debit = await client.query(
+            "UPDATE users SET credits = credits - 1 WHERE id = $1 AND credits > 0 RETURNING credits",
+            [userId]
+          );
+          assert.equal(debit.rows[0].credits, expected);
+          const job = await client.query(
+            "INSERT INTO generation_jobs (user_id, status) VALUES ($1, 'processing') RETURNING id",
+            [userId]
+          );
+          await client.query("COMMIT");
+          if (expected === 1) {
+            // Simulate a completed generation: one credit remains spent.
+            await db.query(
+              "UPDATE generation_jobs SET status = 'completed', image_url = $2 WHERE id = $1",
+              [job.rows[0].id, "https://example.test/generated.jpg"]
+            );
+          } else {
+            // Simulate a failure: refund once, atomically.
+            const refund = await db.connect();
+            try {
+              await refund.query("BEGIN");
+              const failed = await refund.query(
+                "UPDATE generation_jobs SET status = 'failed' WHERE id = $1 AND status = 'processing' RETURNING user_id",
+                [job.rows[0].id]
+              );
+              if (failed.rows.length) {
+                await refund.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [failed.rows[0].user_id]);
+              }
+              await refund.query("COMMIT");
+            } finally { refund.release(); }
+            const repeated = await db.query(
+              "UPDATE generation_jobs SET status = 'failed' WHERE id = $1 AND status = 'processing' RETURNING user_id",
+              [job.rows[0].id]
+            );
+            assert.equal(repeated.rows.length, 0, "refund must not repeat");
+          }
+        } finally { client.release(); }
+      }
+      const balance = await db.query("SELECT credits FROM users WHERE id = $1", [userId]);
+      assert.equal(balance.rows[0].credits, 1, "success debits once, failure refunds once");
+    } finally { await db.end(); }
   } finally {
     child.kill("SIGTERM");
   }
