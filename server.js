@@ -99,9 +99,34 @@ app.use("/api", (req, res, next) => {
   next();
 });
 
+// Basic per-IP throttling. For multiple instances, replace with a shared store before public launch.
+const authAttempts = new Map();
+function authRateLimit(maxAttempts, windowMs) {
+  return (req, res, next) => {
+    const now = Date.now();
+    const key = req.path + ":" + req.ip;
+    const record = authAttempts.get(key);
+    const current = !record || now >= record.resetAt
+      ? { count: 0, resetAt: now + windowMs }
+      : record;
+    current.count++;
+    authAttempts.set(key, current);
+    if (authAttempts.size > 10000) {
+      for (const [k, v] of authAttempts) {
+        if (now >= v.resetAt) authAttempts.delete(k);
+      }
+    }
+    if (current.count > maxAttempts) {
+      res.setHeader("Retry-After", String(Math.ceil((current.resetAt - now) / 1000)));
+      return res.status(429).json({ success: false, error: "Слишком много попыток. Попробуй позже." });
+    }
+    next();
+  };
+}
+
 // REGISTER
 
-app.post("/api/register", async (req, res) => {
+app.post("/api/register", authRateLimit(5, 15 * 60 * 1000), async (req, res) => {
   try {
     const { email, password } = req.body || {};
 
@@ -159,7 +184,7 @@ app.post("/api/register", async (req, res) => {
 
 // LOGIN
 
-app.post("/api/login", async (req, res) => {
+app.post("/api/login", authRateLimit(10, 15 * 60 * 1000), async (req, res) => {
   try {
     const { email, password } = req.body || {};
 
