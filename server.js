@@ -322,14 +322,15 @@ app.post("/api/generate", authenticate, async (req, res) => {
       await pool.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [req.userId]);
       throw generationError;
     }
+    const first = Array.isArray(output) ? output[0] : output;
     const imageUrl =
-      typeof output === "string"
-        ? output
-        : typeof output?.url === "function"
-          ? output.url()
+      typeof first === "string"
+        ? first
+        : typeof first?.url === "function"
+          ? String(first.url())
           : null;
 
-    if (!imageUrl) {
+    if (!imageUrl || !imageUrl.startsWith("https://")) {
       await pool.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [req.userId]);
       throw new Error("No image URL returned");
     }
