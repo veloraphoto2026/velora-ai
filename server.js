@@ -275,6 +275,7 @@ app.post("/api/generate", authenticate, async (req, res) => {
 
     if (
       typeof image !== "string" ||
+      image.length > 11 * 1024 * 1024 ||
       !(
         image.startsWith("data:image/jpeg;base64,") ||
         image.startsWith("data:image/png;base64,")
@@ -295,6 +296,10 @@ app.post("/api/generate", authenticate, async (req, res) => {
         success: false,
         error: "Некорректное описание фотографии"
       });
+    }
+
+    if (!process.env.REPLICATE_API_TOKEN) {
+      return res.status(503).json({ success: false, error: "Генерация временно недоступна" });
     }
 
     const debit = await pool.query(
