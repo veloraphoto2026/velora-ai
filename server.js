@@ -8,7 +8,7 @@ const path = require("path");
 
 const app = express();
 
-app.use(cors());
+// No wildcard CORS: frontend and API are served from the same origin.
 app.use(express.json({ limit: "15mb" }));
 
 const replicate = new Replicate({
@@ -266,90 +266,50 @@ app.get("/api/me", authenticate, async (req, res) => {
   }
 });
 
-// AI PHOTO GENERATION
-// Existing test access remains available.
-
-app.post("/api/generate", async (req, res) => {
+// Authenticated generation: disabled until explicitly enabled on isolated staging.
+app.post("/api/generate", authenticate, async (req, res) => {
+  if (process.env.ENABLE_GENERATION !== "true" || !process.env.REPLICATE_API_TOKEN) {
+    return res.status(503).json({ success: false, error: "Генерация пока отключена" });
+  }
+  const { image, prompt } = req.body || {};
+  if (typeof image !== "string" ||
+      !/^data:image\/(jpeg|png);base64,[A-Za-z0-9+/=]+$/.test(image) ||
+      Buffer.byteLength(image) > 12 * 1024 * 1024 ||
+      typeof prompt !== "string" || !prompt.trim() || prompt.length > 1500) {
+    return res.status(400).json({ success: false, error: "Некорректные данные фотографии" });
+  }
+  let reserved = false;
   try {
-    const secret = process.env.VELORA_TEST_KEY;
-
-    if (!secret) {
-      return res.status(503).json({
-        success: false,
-        error: "Тестовый доступ не настроен"
-      });
-    }
-
-    const providedKey = req.get("x-velora-key");
-
-    if (providedKey !== secret) {
-      return res.status(401).json({
-        success: false,
-        error: "Неверный тестовый ключ"
-      });
-    }
-
-    const { image, prompt } = req.body || {};
-
-    if (
-      typeof image !== "string" ||
-      !(
-        image.startsWith("data:image/jpeg;base64,") ||
-        image.startsWith("data:image/png;base64,")
-      )
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: "Необходима фотография JPEG или PNG"
-      });
-    }
-
-    if (
-      typeof prompt !== "string" ||
-      !prompt.trim() ||
-      prompt.length > 1500
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: "Некорректное описание фотографии"
-      });
-    }
-
-    const output = await replicate.run(
-      "black-forest-labs/flux-kontext-pro",
-      {
-        input: {
-          prompt: prompt.trim(),
-          input_image: image,
-          output_format: "jpg",
-          aspect_ratio: "match_input_image"
-        }
-      }
+    const debit = await pool.query(
+      "UPDATE users SET credits = credits - 1 WHERE id = $1 AND credits > 0 RETURNING credits",
+      [req.userId]
     );
-
-    const imageUrl =
-      typeof output === "string"
-        ? output
-        : typeof output?.url === "function"
-          ? output.url()
-          : null;
-
-    if (!imageUrl) {
-      throw new Error("No image URL returned");
+    if (!debit.rows.length) {
+      return res.status(402).json({ success: false, error: "Бесплатные генерации закончились. Оплата ещё не подключена." });
     }
-
-    res.json({
-      success: true,
-      image: imageUrl
+    reserved = true;
+    const output = await replicate.run("black-forest-labs/flux-kontext-pro", {
+      input: { prompt: prompt.trim(), input_image: image, output_format: "jpg", aspect_ratio: "match_input_image" }
     });
-
+    const value = Array.isArray(output) ? output[0] : output;
+    const result = typeof value === "string" ? value :
+      typeof value?.url === "function" ? await value.url() : value?.url;
+    const imageUrl = result instanceof URL ? result.toString() : result;
+    if (typeof imageUrl !== "string" || !imageUrl.startsWith("https://")) {
+      throw new Error("Invalid image URL");
+    }
+    reserved = false;
+    return res.json({ success: true, image: imageUrl, credits: debit.rows[0].credits });
   } catch (error) {
     console.error("Generation error:", error);
-
-    res.status(500).json({
-      success: false,
-      error: "Ошибка генерации фотографии"
-    });
+    if (reserved) {
+      try {
+        await pool.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [req.userId]);
+      } catch (refundError) {
+        console.error("CRITICAL: refund failed for user", req.userId, refundError);
+      }
+    }
+    return res.status(500).json({ success: false, error: "Ошибка генерации. Проверь баланс в кабинете." });
   }
 });
 
