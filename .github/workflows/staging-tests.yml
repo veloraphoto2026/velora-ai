@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - velora-staging-safe-20261025
+      - velora-integration-safe-20261025
   workflow_dispatch:
 jobs:
   test:
