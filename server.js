@@ -56,6 +56,16 @@ async function initDatabase() {
     ALTER COLUMN credits SET DEFAULT 2
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS generation_jobs (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id),
+      status TEXT NOT NULL CHECK (status IN ('processing', 'completed', 'failed')),
+      image_url TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
   console.log("Velora AI database ready");
 }
 
@@ -294,16 +304,33 @@ app.post("/api/generate", authenticate, async (req, res) => {
       typeof prompt !== "string" || !prompt.trim() || prompt.length > 1500) {
     return res.status(400).json({ success: false, error: "Некорректные данные фотографии" });
   }
-  let reserved = false;
+  let jobId = null;
+  let client;
   try {
-    const debit = await pool.query(
+    client = await pool.connect();
+    await client.query("BEGIN");
+    const debit = await client.query(
       "UPDATE users SET credits = credits - 1 WHERE id = $1 AND credits > 0 RETURNING credits",
       [req.userId]
     );
     if (!debit.rows.length) {
+      await client.query("ROLLBACK");
       return res.status(402).json({ success: false, error: "Бесплатные генерации закончились. Оплата ещё не подключена." });
     }
-    reserved = true;
+    const job = await client.query(
+      "INSERT INTO generation_jobs (user_id, status) VALUES ($1, 'processing') RETURNING id",
+      [req.userId]
+    );
+    jobId = job.rows[0].id;
+    await client.query("COMMIT");
+  } catch (error) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    console.error("Reservation error:", error);
+    return res.status(500).json({ success: false, error: "Не удалось зарезервировать генерацию" });
+  } finally {
+    if (client) client.release();
+  }
+  try {
     const output = await replicate.run("black-forest-labs/flux-kontext-pro", {
       input: { prompt: prompt.trim(), input_image: image, output_format: "jpg", aspect_ratio: "match_input_image" }
     });
@@ -314,18 +341,37 @@ app.post("/api/generate", authenticate, async (req, res) => {
     if (typeof imageUrl !== "string" || !imageUrl.startsWith("https://")) {
       throw new Error("Invalid image URL");
     }
-    reserved = false;
-    return res.json({ success: true, image: imageUrl, credits: debit.rows[0].credits });
+    await pool.query(
+      "UPDATE generation_jobs SET status = 'completed', image_url = $2, updated_at = NOW() WHERE id = $1",
+      [jobId, imageUrl]
+    );
+    const balance = await pool.query("SELECT credits FROM users WHERE id = $1", [req.userId]);
+    return res.json({ success: true, image: imageUrl, credits: balance.rows[0].credits, jobId });
   } catch (error) {
-    console.error("Generation error:", error);
-    if (reserved) {
+    console.error("Generation error for job", jobId, error);
+    try {
+      // Idempotent refund: only one transition from processing to failed can refund.
+      const db = await pool.connect();
       try {
-        await pool.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [req.userId]);
+        await db.query("BEGIN");
+        const failed = await db.query(
+          "UPDATE generation_jobs SET status = 'failed', updated_at = NOW() WHERE id = $1 AND status = 'processing' RETURNING user_id",
+          [jobId]
+        );
+        if (failed.rows.length) {
+          await db.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [failed.rows[0].user_id]);
+        }
+        await db.query("COMMIT");
       } catch (refundError) {
-        console.error("CRITICAL: refund failed for user", req.userId, refundError);
+        await db.query("ROLLBACK").catch(() => {});
+        console.error("CRITICAL: job refund pending manual review", jobId, refundError);
+      } finally {
+        db.release();
       }
+    } catch (connectionError) {
+      console.error("CRITICAL: refund database unavailable for job", jobId, connectionError);
     }
-    return res.status(500).json({ success: false, error: "Ошибка генерации. Проверь баланс в кабинете." });
+    return res.status(500).json({ success: false, error: "Ошибка генерации. Проверь баланс в кабинете.", jobId });
   }
 });
 
