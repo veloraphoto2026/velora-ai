@@ -1,0 +1,8 @@
+# Separate zero-cost static preview. No database, secrets, auth, or generation.
+services:
+  - type: web
+    name: velora-ai-preview
+    runtime: static
+    buildCommand: mkdir -p public && cp preview/index.html public/index.html
+    staticPublishPath: public
+    autoDeployTrigger: off
