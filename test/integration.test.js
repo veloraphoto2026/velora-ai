@@ -48,6 +48,12 @@ test("HTTP registration, login, balance and disabled generation with real Postgr
     assert.ok(registered.body.token);
     const duplicate = await post("/api/register", { email, password });
     assert.equal(duplicate.status, 409);
+    for (let i = 0; i < 3; i++) {
+      const repeated = await post("/api/register", { email, password });
+      assert.equal(repeated.status, 409);
+    }
+    const limited = await post("/api/register", { email, password });
+    assert.equal(limited.status, 429);
     const wrong = await post("/api/login", { email, password: "incorrect-password" });
     assert.equal(wrong.status, 401);
     const login = await post("/api/login", { email, password });
