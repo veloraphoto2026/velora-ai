@@ -1,27 +1,41 @@
 const express = require("express");
-const cors = require("cors");
 const Replicate = require("replicate");
 const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const path = require("path");
 
+for (const key of ["DATABASE_URL", "JWT_SECRET"]) {
+  if (!process.env[key]) {
+    console.error("Missing required configuration:", key);
+    process.exit(1);
+  }
+}
+if (process.env.JWT_SECRET.length < 32) {
+  console.error("JWT_SECRET must be at least 32 characters");
+  process.exit(1);
+}
 const app = express();
+app.disable("x-powered-by");
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("X-Frame-Options", "DENY");
+  next();
+});
 
-app.use(cors());
+// No wildcard CORS: frontend and API are served from the same origin.
 app.use(express.json({ limit: "15mb" }));
 
-const replicate = new Replicate({
-  auth: process.env.REPLICATE_API_TOKEN
-});
+const replicate = process.env.REPLICATE_API_TOKEN
+  ? new Replicate({ auth: process.env.REPLICATE_API_TOKEN })
+  : null;
 
 // DATABASE
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL
-    ? { rejectUnauthorized: false }
-    : undefined
+  ssl: process.env.PGSSL === "require" ? { rejectUnauthorized: true } : undefined
 });
 
 // CREATE USERS TABLE
@@ -42,10 +56,21 @@ async function initDatabase() {
     ALTER COLUMN credits SET DEFAULT 2
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS generation_jobs (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id),
+      status TEXT NOT NULL CHECK (status IN ('processing', 'completed', 'failed')),
+      image_url TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
   console.log("Velora AI database ready");
 }
 
-initDatabase().catch(error => {
+let databaseReady = false;
+initDatabase().then(() => { databaseReady = true; }).catch(error => {
   console.error("Database initialization failed:", error);
 });
 
@@ -61,13 +86,47 @@ app.get("/api/health", (req, res) => {
   res.json({
     success: true,
     service: "Velora AI",
-    status: "running"
+    status: databaseReady ? "running" : "initializing",
+    databaseReady
   });
 });
 
+// Reject database-dependent requests until initialization has completed.
+app.use("/api", (req, res, next) => {
+  if (!databaseReady) {
+    return res.status(503).json({ success: false, error: "База данных пока недоступна" });
+  }
+  next();
+});
+
+// Basic per-IP throttling. For multiple instances, replace with a shared store before public launch.
+const authAttempts = new Map();
+function authRateLimit(maxAttempts, windowMs) {
+  return (req, res, next) => {
+    const now = Date.now();
+    const key = req.path + ":" + req.ip;
+    const record = authAttempts.get(key);
+    const current = !record || now >= record.resetAt
+      ? { count: 0, resetAt: now + windowMs }
+      : record;
+    current.count++;
+    authAttempts.set(key, current);
+    if (authAttempts.size > 10000) {
+      for (const [k, v] of authAttempts) {
+        if (now >= v.resetAt) authAttempts.delete(k);
+      }
+    }
+    if (current.count > maxAttempts) {
+      res.setHeader("Retry-After", String(Math.ceil((current.resetAt - now) / 1000)));
+      return res.status(429).json({ success: false, error: "Слишком много попыток. Попробуй позже." });
+    }
+    next();
+  };
+}
+
 // REGISTER
 
-app.post("/api/register", async (req, res) => {
+app.post("/api/register", authRateLimit(5, 15 * 60 * 1000), async (req, res) => {
   try {
     const { email, password } = req.body || {};
 
@@ -76,7 +135,8 @@ app.post("/api/register", async (req, res) => {
       typeof password !== "string" ||
       !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
       password.length < 8 ||
-      password.length > 128
+      password.length > 128 ||
+      email.trim().length > 254
     ) {
       return res.status(400).json({
         success: false,
@@ -85,18 +145,6 @@ app.post("/api/register", async (req, res) => {
     }
 
     const normalizedEmail = email.trim().toLowerCase();
-
-    const existing = await pool.query(
-      "SELECT id FROM users WHERE email = $1",
-      [normalizedEmail]
-    );
-
-    if (existing.rows.length) {
-      return res.status(409).json({
-        success: false,
-        error: "Этот email уже зарегистрирован"
-      });
-    }
 
     const passwordHash = await bcrypt.hash(password, 12);
 
@@ -122,6 +170,9 @@ app.post("/api/register", async (req, res) => {
     });
 
   } catch (error) {
+    if (error.code === "23505") {
+      return res.status(409).json({ success: false, error: "Этот email уже зарегистрирован" });
+    }
     console.error("Register error:", error);
 
     res.status(500).json({
@@ -133,7 +184,7 @@ app.post("/api/register", async (req, res) => {
 
 // LOGIN
 
-app.post("/api/login", async (req, res) => {
+app.post("/api/login", authRateLimit(10, 15 * 60 * 1000), async (req, res) => {
   try {
     const { email, password } = req.body || {};
 
@@ -266,90 +317,100 @@ app.get("/api/me", authenticate, async (req, res) => {
   }
 });
 
-// AI PHOTO GENERATION
-// Existing test access remains available.
-
-app.post("/api/generate", async (req, res) => {
+// Account job history makes interrupted attempts visible for support review.
+app.get("/api/my-generations", authenticate, async (req, res) => {
   try {
-    const secret = process.env.VELORA_TEST_KEY;
-
-    if (!secret) {
-      return res.status(503).json({
-        success: false,
-        error: "Тестовый доступ не настроен"
-      });
-    }
-
-    const providedKey = req.get("x-velora-key");
-
-    if (providedKey !== secret) {
-      return res.status(401).json({
-        success: false,
-        error: "Неверный тестовый ключ"
-      });
-    }
-
-    const { image, prompt } = req.body || {};
-
-    if (
-      typeof image !== "string" ||
-      !(
-        image.startsWith("data:image/jpeg;base64,") ||
-        image.startsWith("data:image/png;base64,")
-      )
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: "Необходима фотография JPEG или PNG"
-      });
-    }
-
-    if (
-      typeof prompt !== "string" ||
-      !prompt.trim() ||
-      prompt.length > 1500
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: "Некорректное описание фотографии"
-      });
-    }
-
-    const output = await replicate.run(
-      "black-forest-labs/flux-kontext-pro",
-      {
-        input: {
-          prompt: prompt.trim(),
-          input_image: image,
-          output_format: "jpg",
-          aspect_ratio: "match_input_image"
-        }
-      }
+    const result = await pool.query(
+      "SELECT id, status, created_at, updated_at FROM generation_jobs WHERE user_id = $1 ORDER BY id DESC LIMIT 20",
+      [req.userId]
     );
-
-    const imageUrl =
-      typeof output === "string"
-        ? output
-        : typeof output?.url === "function"
-          ? output.url()
-          : null;
-
-    if (!imageUrl) {
-      throw new Error("No image URL returned");
-    }
-
-    res.json({
-      success: true,
-      image: imageUrl
-    });
-
+    res.json({ success: true, jobs: result.rows });
   } catch (error) {
-    console.error("Generation error:", error);
+    console.error("Job history error:", error);
+    res.status(500).json({ success: false, error: "Не удалось загрузить историю" });
+  }
+});
 
-    res.status(500).json({
-      success: false,
-      error: "Ошибка генерации фотографии"
+// Authenticated generation: disabled until explicitly enabled on isolated staging.
+app.post("/api/generate", authenticate, async (req, res) => {
+  if (process.env.ENABLE_GENERATION !== "true" || !replicate) {
+    return res.status(503).json({ success: false, error: "Генерация пока отключена" });
+  }
+  const { image, prompt } = req.body || {};
+  if (typeof image !== "string" ||
+      !/^data:image\/(jpeg|png);base64,[A-Za-z0-9+/=]+$/.test(image) ||
+      Buffer.byteLength(image) > 12 * 1024 * 1024 ||
+      typeof prompt !== "string" || !prompt.trim() || prompt.length > 1500) {
+    return res.status(400).json({ success: false, error: "Некорректные данные фотографии" });
+  }
+  let jobId = null;
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query("BEGIN");
+    const debit = await client.query(
+      "UPDATE users SET credits = credits - 1 WHERE id = $1 AND credits > 0 RETURNING credits",
+      [req.userId]
+    );
+    if (!debit.rows.length) {
+      await client.query("ROLLBACK");
+      return res.status(402).json({ success: false, error: "Бесплатные генерации закончились. Оплата ещё не подключена." });
+    }
+    const job = await client.query(
+      "INSERT INTO generation_jobs (user_id, status) VALUES ($1, 'processing') RETURNING id",
+      [req.userId]
+    );
+    jobId = job.rows[0].id;
+    await client.query("COMMIT");
+  } catch (error) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    console.error("Reservation error:", error);
+    return res.status(500).json({ success: false, error: "Не удалось зарезервировать генерацию" });
+  } finally {
+    if (client) client.release();
+  }
+  try {
+    const output = await replicate.run("black-forest-labs/flux-kontext-pro", {
+      input: { prompt: prompt.trim(), input_image: image, output_format: "jpg", aspect_ratio: "match_input_image" }
     });
+    const value = Array.isArray(output) ? output[0] : output;
+    const result = typeof value === "string" ? value :
+      typeof value?.url === "function" ? await value.url() : value?.url;
+    const imageUrl = result instanceof URL ? result.toString() : result;
+    if (typeof imageUrl !== "string" || !imageUrl.startsWith("https://")) {
+      throw new Error("Invalid image URL");
+    }
+    await pool.query(
+      "UPDATE generation_jobs SET status = 'completed', image_url = $2, updated_at = NOW() WHERE id = $1",
+      [jobId, imageUrl]
+    );
+    const balance = await pool.query("SELECT credits FROM users WHERE id = $1", [req.userId]);
+    return res.json({ success: true, image: imageUrl, credits: balance.rows[0].credits, jobId });
+  } catch (error) {
+    console.error("Generation error for job", jobId, error);
+    try {
+      // Idempotent refund: only one transition from processing to failed can refund.
+      const db = await pool.connect();
+      try {
+        await db.query("BEGIN");
+        const failed = await db.query(
+          "UPDATE generation_jobs SET status = 'failed', updated_at = NOW() WHERE id = $1 AND status = 'processing' RETURNING user_id",
+          [jobId]
+        );
+        if (failed.rows.length) {
+          await db.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [failed.rows[0].user_id]);
+        }
+        await db.query("COMMIT");
+      } catch (refundError) {
+        await db.query("ROLLBACK").catch(() => {});
+        console.error("CRITICAL: job refund pending manual review", jobId, refundError);
+      } finally {
+        db.release();
+      }
+    } catch (connectionError) {
+      console.error("CRITICAL: refund database unavailable for job", jobId, connectionError);
+    }
+    return res.status(500).json({ success: false, error: "Ошибка генерации. Проверь баланс в кабинете.", jobId });
   }
 });
 
