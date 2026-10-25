@@ -22,3 +22,9 @@ test("atomic credit reservation", () => {
 test("test key is not requested by browser", () => {
   assert.ok(!html.includes('id="testKey"'));
 });
+
+test("registration and login are rate-limited", () => {
+  assert.match(server, /app\.post\("\/api\/register", authRateLimit\(5,/);
+  assert.match(server, /app\.post\("\/api\/login", authRateLimit\(10,/);
+  assert.ok(server.includes('res.status(429)'));
+});
