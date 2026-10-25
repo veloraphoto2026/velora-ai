@@ -1,12 +1,28 @@
 const express = require("express");
-const cors = require("cors");
 const Replicate = require("replicate");
 const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const path = require("path");
 
+for (const key of ["DATABASE_URL", "JWT_SECRET"]) {
+  if (!process.env[key]) {
+    console.error("Missing required configuration:", key);
+    process.exit(1);
+  }
+}
+if (process.env.JWT_SECRET.length < 32) {
+  console.error("JWT_SECRET must be at least 32 characters");
+  process.exit(1);
+}
 const app = express();
+app.disable("x-powered-by");
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("X-Frame-Options", "DENY");
+  next();
+});
 
 // No wildcard CORS: frontend and API are served from the same origin.
 app.use(express.json({ limit: "15mb" }));
@@ -19,9 +35,7 @@ const replicate = new Replicate({
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL
-    ? { rejectUnauthorized: false }
-    : undefined
+  ssl: process.env.PGSSL === "require" ? { rejectUnauthorized: true } : undefined
 });
 
 // CREATE USERS TABLE
@@ -76,7 +90,8 @@ app.post("/api/register", async (req, res) => {
       typeof password !== "string" ||
       !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
       password.length < 8 ||
-      password.length > 128
+      password.length > 128 ||
+      email.trim().length > 254
     ) {
       return res.status(400).json({
         success: false,
@@ -85,18 +100,6 @@ app.post("/api/register", async (req, res) => {
     }
 
     const normalizedEmail = email.trim().toLowerCase();
-
-    const existing = await pool.query(
-      "SELECT id FROM users WHERE email = $1",
-      [normalizedEmail]
-    );
-
-    if (existing.rows.length) {
-      return res.status(409).json({
-        success: false,
-        error: "Этот email уже зарегистрирован"
-      });
-    }
 
     const passwordHash = await bcrypt.hash(password, 12);
 
@@ -122,6 +125,9 @@ app.post("/api/register", async (req, res) => {
     });
 
   } catch (error) {
+    if (error.code === "23505") {
+      return res.status(409).json({ success: false, error: "Этот email уже зарегистрирован" });
+    }
     console.error("Register error:", error);
 
     res.status(500).json({
