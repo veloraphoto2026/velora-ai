@@ -24,6 +24,7 @@ services:
         sync: false
 databases:
   - name: velora-ai-staging-db
-    plan: free
+    plan: 0.1c-256mb
+    diskSizeGB: 1
     databaseName: velora_staging
     user: velora_staging
