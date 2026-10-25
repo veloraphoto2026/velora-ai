@@ -267,7 +267,7 @@ app.get("/api/me", authenticate, async (req, res) => {
 });
 
 // AI PHOTO GENERATION
-// Existing test access remains available.
+// Only authenticated account requests are permitted.
 
 app.post("/api/generate", authenticate, async (req, res) => {
   try {
@@ -325,7 +325,7 @@ app.post("/api/generate", authenticate, async (req, res) => {
 
     } catch (generationError) {
       await pool.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [req.userId]);
-      throw generationError;
+      return res.status(502).json({ success: false, error: "Generation failed; credit restored" });
     }
     const first = Array.isArray(output) ? output[0] : output;
     const imageUrl =
@@ -337,7 +337,7 @@ app.post("/api/generate", authenticate, async (req, res) => {
 
     if (!imageUrl || !imageUrl.startsWith("https://")) {
       await pool.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [req.userId]);
-      throw new Error("No image URL returned");
+      return res.status(502).json({ success: false, error: "No image returned; credit restored" });
     }
 
     res.json({
