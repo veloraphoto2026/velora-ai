@@ -113,6 +113,8 @@ button {
   cursor:pointer;
 }
 
+[hidden] { display:none !important; }
+
 button:disabled {
   opacity:.55;
   cursor:not-allowed;
@@ -166,6 +168,19 @@ footer {
 <main class="container">
 
 <h2>ИИ-фотостудия</h2>
+<section class="panel" id="account-panel">
+<h2>Личный кабинет</h2>
+<p class="note" id="account-info">Войдите или зарегистрируйтесь. Новому пользователю начисляются 2 бесплатные генерации.</p>
+<div id="auth-forms">
+<label for="auth-email">Email</label><input id="auth-email" type="email" autocomplete="email" maxlength="254">
+<label for="auth-password">Пароль (минимум 8 символов)</label><input id="auth-password" type="password" autocomplete="current-password" minlength="8">
+<button id="register-button" type="button">Зарегистрироваться</button>
+<button id="login-button" type="button">Войти</button>
+</div>
+<button id="logout-button" type="button" hidden>Выйти из аккаунта</button>
+<p class="status" id="auth-status" role="status" aria-live="polite"></p>
+</section>
+
 
 <div class="panel">
 
@@ -190,19 +205,12 @@ footer {
 <textarea id="prompt"
 placeholder="Например: красивое вечернее платье, Париж, мягкий свет"></textarea>
 
-<label for="testKey">🔐 Тестовый доступ</label>
-<input
-  type="password"
-  id="testKey"
-  placeholder="Введи тестовый ключ"
-  autocomplete="off"
->
 <button id="generate" type="button">
   ✨ Создать фотографию
 </button>
 
 <p class="note">
-  Тестовая версия. Генерация пока не подключена к интерфейсу.
+  Тестовая версия. Для генерации войдите в аккаунт. Генерация на сервере пока отключена.
   Загруженная фотография остаётся в браузере.
 </p>
 
@@ -312,15 +320,15 @@ photo.addEventListener("change", () => {
 
 document.getElementById("generate").addEventListener("click", async () => {
   const button = document.getElementById("generate");
-  const key = document.getElementById("testKey").value.trim();
+  const token = sessionStorage.getItem("velora_session");
 
   if (!photo.files.length) {
     status.textContent = "Сначала загрузи фотографию";
     return;
   }
 
-  if (!key) {
-    status.textContent = "Введи тестовый ключ";
+  if (!token) {
+    status.textContent = "Сначала войди в аккаунт";
     return;
   }
 
@@ -365,7 +373,7 @@ document.getElementById("generate").addEventListener("click", async () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-velora-key": key
+        "Authorization": "Bearer " + token
       },
       body: JSON.stringify({
         image,
@@ -383,7 +391,13 @@ document.getElementById("generate").addEventListener("click", async () => {
     output.src = result.image;
     output.style.display = "block";
 
-    status.textContent = "✅ Фотография готова!";
+    status.textContent = "✅ Фотография готова! Осталось генераций: " + result.credits;
+    document.getElementById("download").style.display = "block";
+    const profile = await fetch("/api/me", { headers: { Authorization: "Bearer " + token } }).catch(() => null);
+    if (profile && profile.ok) {
+      const data = await profile.json();
+      if (data.success) document.getElementById("account-info").textContent = "Аккаунт: " + data.user.email + " · Бесплатных генераций: " + data.user.credits;
+    }
 
   } catch (error) {
     status.textContent = "Ошибка: " + error.message;
@@ -393,10 +407,72 @@ document.getElementById("generate").addEventListener("click", async () => {
 });
 
 document.getElementById("download").addEventListener("click", () => {
-  status.textContent = "Сохранение станет доступно после подключения ИИ.";
+  const src = document.getElementById("result").getAttribute("src");
+  if (src) window.open(src, "_blank", "noopener,noreferrer");
 });
 
 </script>
 
+
+<script>
+(() => {
+  const email = document.getElementById("auth-email");
+  const password = document.getElementById("auth-password");
+  const status = document.getElementById("auth-status");
+  const info = document.getElementById("account-info");
+  const forms = document.getElementById("auth-forms");
+  const logout = document.getElementById("logout-button");
+  const register = document.getElementById("register-button");
+  const login = document.getElementById("login-button");
+  let token = sessionStorage.getItem("velora_session");
+
+  function showGuest() {
+    token = null;
+    sessionStorage.removeItem("velora_session");
+    forms.hidden = false;
+    logout.hidden = true;
+    info.textContent = "Войдите или зарегистрируйтесь. Новому пользователю начисляются 2 бесплатные генерации.";
+  }
+  function showUser(user) {
+    forms.hidden = true;
+    logout.hidden = false;
+    info.textContent = "Аккаунт: " + user.email + " · Бесплатных генераций: " + user.credits;
+    password.value = "";
+  }
+  async function request(url, options) {
+    const response = await fetch(url, options);
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok || !body.success) throw new Error(body.error || "Ошибка сервера");
+    return body;
+  }
+  async function authenticate(action) {
+    status.textContent = "Подключаемся…";
+    register.disabled = login.disabled = true;
+    try {
+      const body = await request("/api/" + action, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.value.trim(), password: password.value })
+      });
+      token = body.token;
+      sessionStorage.setItem("velora_session", token);
+      showUser(body.user);
+      status.textContent = "Готово!";
+    } catch (err) {
+      status.textContent = err.message;
+    } finally {
+      register.disabled = login.disabled = false;
+    }
+  }
+  register.addEventListener("click", () => authenticate("register"));
+  login.addEventListener("click", () => authenticate("login"));
+  logout.addEventListener("click", () => { showGuest(); status.textContent = "Вы вышли из аккаунта."; });
+  if (token) {
+    request("/api/me", { headers: { Authorization: "Bearer " + token } })
+      .then(body => showUser(body.user))
+      .catch(() => { showGuest(); status.textContent = "Войдите снова."; });
+  }
+})();
+</script>
 </body>
 </html>
