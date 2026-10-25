@@ -203,19 +203,12 @@ footer {
 <textarea id="prompt"
 placeholder="Например: красивое вечернее платье, Париж, мягкий свет"></textarea>
 
-<label for="testKey">🔐 Тестовый доступ</label>
-<input
-  type="password"
-  id="testKey"
-  placeholder="Введи тестовый ключ"
-  autocomplete="off"
->
 <button id="generate" type="button">
   ✨ Создать фотографию
 </button>
 
 <p class="note">
-  Тестовая версия. Генерация пока не подключена к интерфейсу.
+  Тестовая версия. Для генерации войдите в аккаунт. Генерация на сервере пока отключена.
   Загруженная фотография остаётся в браузере.
 </p>
 
@@ -325,15 +318,15 @@ photo.addEventListener("change", () => {
 
 document.getElementById("generate").addEventListener("click", async () => {
   const button = document.getElementById("generate");
-  const key = document.getElementById("testKey").value.trim();
+  const token = sessionStorage.getItem("velora_session");
 
   if (!photo.files.length) {
     status.textContent = "Сначала загрузи фотографию";
     return;
   }
 
-  if (!key) {
-    status.textContent = "Введи тестовый ключ";
+  if (!token) {
+    status.textContent = "Сначала войди в аккаунт";
     return;
   }
 
@@ -378,7 +371,7 @@ document.getElementById("generate").addEventListener("click", async () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-velora-key": key
+        "Authorization": "Bearer " + token
       },
       body: JSON.stringify({
         image,
@@ -396,7 +389,8 @@ document.getElementById("generate").addEventListener("click", async () => {
     output.src = result.image;
     output.style.display = "block";
 
-    status.textContent = "✅ Фотография готова!";
+    status.textContent = "✅ Фотография готова! Осталось генераций: " + result.credits;
+    document.getElementById("download").style.display = "block";
 
   } catch (error) {
     status.textContent = "Ошибка: " + error.message;
@@ -406,7 +400,8 @@ document.getElementById("generate").addEventListener("click", async () => {
 });
 
 document.getElementById("download").addEventListener("click", () => {
-  status.textContent = "Сохранение станет доступно после подключения ИИ.";
+  const src = document.getElementById("result").src;
+  if (src) window.open(src, "_blank", "noopener,noreferrer");
 });
 
 </script>
