@@ -292,6 +292,20 @@ app.get("/api/me", authenticate, async (req, res) => {
   }
 });
 
+// Account job history makes interrupted attempts visible for support review.
+app.get("/api/my-generations", authenticate, async (req, res) => {
+  try {
+    const result = await pool.query(
+      "SELECT id, status, created_at, updated_at FROM generation_jobs WHERE user_id = $1 ORDER BY id DESC LIMIT 20",
+      [req.userId]
+    );
+    res.json({ success: true, jobs: result.rows });
+  } catch (error) {
+    console.error("Job history error:", error);
+    res.status(500).json({ success: false, error: "Не удалось загрузить историю" });
+  }
+});
+
 // Authenticated generation: disabled until explicitly enabled on isolated staging.
 app.post("/api/generate", authenticate, async (req, res) => {
   if (process.env.ENABLE_GENERATION !== "true" || !replicate) {
