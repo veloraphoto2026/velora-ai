@@ -330,6 +330,7 @@ app.post("/api/generate", authenticate, async (req, res) => {
           : null;
 
     if (!imageUrl) {
+      await pool.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [req.userId]);
       throw new Error("No image URL returned");
     }
 
