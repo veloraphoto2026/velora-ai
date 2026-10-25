@@ -271,24 +271,6 @@ app.get("/api/me", authenticate, async (req, res) => {
 
 app.post("/api/generate", authenticate, async (req, res) => {
   try {
-    const secret = process.env.VELORA_TEST_KEY;
-
-    if (!secret) {
-      return res.status(503).json({
-        success: false,
-        error: "Тестовый доступ не настроен"
-      });
-    }
-
-    const providedKey = req.get("x-velora-key");
-
-    if (providedKey !== secret) {
-      return res.status(401).json({
-        success: false,
-        error: "Неверный тестовый ключ"
-      });
-    }
-
     const { image, prompt } = req.body || {};
 
     if (
@@ -315,7 +297,16 @@ app.post("/api/generate", authenticate, async (req, res) => {
       });
     }
 
-    const output = await replicate.run(
+    const debit = await pool.query(
+      "UPDATE users SET credits = credits - 1 WHERE id = $1 AND credits > 0 RETURNING credits",
+      [req.userId]
+    );
+    if (!debit.rows.length) {
+      return res.status(402).json({ success: false, error: "Бесплатные генерации закончились" });
+    }
+    let output;
+    try {
+      output = await replicate.run(
       "black-forest-labs/flux-kontext-pro",
       {
         input: {
@@ -327,6 +318,10 @@ app.post("/api/generate", authenticate, async (req, res) => {
       }
     );
 
+    } catch (generationError) {
+      await pool.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [req.userId]);
+      throw generationError;
+    }
     const imageUrl =
       typeof output === "string"
         ? output
@@ -340,7 +335,8 @@ app.post("/api/generate", authenticate, async (req, res) => {
 
     res.json({
       success: true,
-      image: imageUrl
+      image: imageUrl,
+      credits: debit.rows[0].credits
     });
 
   } catch (error) {
