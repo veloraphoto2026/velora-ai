@@ -269,7 +269,7 @@ app.get("/api/me", authenticate, async (req, res) => {
 // AI PHOTO GENERATION
 // Existing test access remains available.
 
-app.post("/api/generate", async (req, res) => {
+app.post("/api/generate", authenticate, async (req, res) => {
   try {
     const secret = process.env.VELORA_TEST_KEY;
 
