@@ -113,6 +113,8 @@ button {
   cursor:pointer;
 }
 
+[hidden] { display:none !important; }
+
 button:disabled {
   opacity:.55;
   cursor:not-allowed;
@@ -391,6 +393,11 @@ document.getElementById("generate").addEventListener("click", async () => {
 
     status.textContent = "✅ Фотография готова! Осталось генераций: " + result.credits;
     document.getElementById("download").style.display = "block";
+    const profile = await fetch("/api/me", { headers: { Authorization: "Bearer " + token } });
+    if (profile.ok) {
+      const data = await profile.json();
+      if (data.success) document.getElementById("account-info").textContent = "Аккаунт: " + data.user.email + " · Бесплатных генераций: " + data.user.credits;
+    }
 
   } catch (error) {
     status.textContent = "Ошибка: " + error.message;
@@ -400,7 +407,7 @@ document.getElementById("generate").addEventListener("click", async () => {
 });
 
 document.getElementById("download").addEventListener("click", () => {
-  const src = document.getElementById("result").src;
+  const src = document.getElementById("result").getAttribute("src");
   if (src) window.open(src, "_blank", "noopener,noreferrer");
 });
 
