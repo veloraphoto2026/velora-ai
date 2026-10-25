@@ -1,0 +1,29 @@
+# Velora AI — isolated staging deployment
+# This blueprint is intentionally NOT deployed automatically.
+# Review costs and create an isolated Render Blueprint manually.
+services:
+  - type: web
+    name: velora-ai-staging
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ENABLE_GENERATION
+        value: "false"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: velora-ai-staging-db
+          property: connectionString
+      - key: REPLICATE_API_TOKEN
+        sync: false
+databases:
+  - name: velora-ai-staging-db
+    plan: free
+    databaseName: velora_staging
+    user: velora_staging
