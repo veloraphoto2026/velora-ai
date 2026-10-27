@@ -5,6 +5,7 @@ const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const path = require("path");
+const { mountPaidPlatform } = require("./src/platform/mount");
 
 const app = express();
 
@@ -232,6 +233,9 @@ function authenticate(req, res, next) {
     });
   }
 }
+
+// Read-only platform endpoints (no billing or provider calls enabled).
+mountPaidPlatform(app, { pool, authenticate });
 
 // USER PROFILE
 
