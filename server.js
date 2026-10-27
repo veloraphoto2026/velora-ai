@@ -5,6 +5,7 @@ const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const path = require("path");
+const { mountPaidPlatform } = require("./src/platform/mount");
 
 const app = express();
 
@@ -32,14 +33,14 @@ async function initDatabase() {
       id BIGSERIAL PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
-      credits INTEGER NOT NULL DEFAULT 2,
+      credits INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
 
     await pool.query(`
     ALTER TABLE users
-    ALTER COLUMN credits SET DEFAULT 2
+    ALTER COLUMN credits SET DEFAULT 0
   `);
 
   console.log("Velora AI database ready");
@@ -233,6 +234,9 @@ function authenticate(req, res, next) {
   }
 }
 
+// Read-only platform endpoints (no billing or provider calls enabled).
+mountPaidPlatform(app, { pool, authenticate });
+
 // USER PROFILE
 
 app.get("/api/me", authenticate, async (req, res) => {
@@ -270,6 +274,13 @@ app.get("/api/me", authenticate, async (req, res) => {
 // Only authenticated account requests are permitted.
 
 app.post("/api/generate", authenticate, async (req, res) => {
+  // Legacy credit-based generation is disabled for the paid-only platform.
+  // Never call a provider before verified paid billing is enabled.
+  return res.status(503).json({success:false,error:"Генерация временно недоступна: готовится платная платформа"});
+});
+
+/* LEGACY_GENERATION_DISABLED
+app.post("/api/generate-legacy-disabled", authenticate, async (req, res) => {
   try {
     const { image, prompt } = req.body || {};
 
@@ -355,6 +366,8 @@ app.post("/api/generate", authenticate, async (req, res) => {
     });
   }
 });
+
+END_LEGACY_GENERATION_DISABLED */
 
 // START SERVER
 

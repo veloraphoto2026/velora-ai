@@ -1,0 +1,13 @@
+# Release gates — paid Velora AI
+- [ ] Confirm Ranvik endpoint paths and request/response schemas against official documentation; current adapter paths are provisional.
+- [ ] Confirm model IDs, per-model provider costs, user prices, currency and rounding.
+- [ ] Verify available provider modalities (including whether 3D/music are actually supported).
+- [ ] Implement payment initiation and signature-verified webhook; idempotent crediting, refunds and reconciliation.
+- [ ] Add authenticated server-side job route with allowlisted models, trusted price, and atomic reserve.
+- [ ] Add async worker, timeout reconciliation, result storage and safe settlement.
+- [ ] Add tests with isolated PostgreSQL for concurrent reserve, retry, insufficient funds, settlement, failure and webhook replay.
+- [ ] Disable old free-credit generation before public launch; preserve old users' balances until migration policy is agreed.
+- [ ] Back up production database; test migrations in staging.
+- [ ] Check frontend hosting source and both index.html copies before modifying.
+- [ ] Confirm environment variables and domain CORS; no secrets in client.
+- [ ] Obtain explicit approval before production deploy, changing payment settings, or modifying existing balances.
