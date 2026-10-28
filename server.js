@@ -14,6 +14,7 @@ async function init(){
  // Preserve all existing balances; zero applies only to future registrations.
  await pool.query("ALTER TABLE users ALTER COLUMN credits SET DEFAULT 0");
  await pool.query("CREATE TABLE IF NOT EXISTS generation_jobs(id UUID PRIMARY KEY,user_id BIGINT NOT NULL REFERENCES users(id),kind TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',created_at TIMESTAMPTZ DEFAULT NOW())");
+ await pool.query("CREATE TABLE IF NOT EXISTS payment_orders(id BIGSERIAL PRIMARY KEY,user_id BIGINT NOT NULL REFERENCES users(id),provider TEXT NOT NULL DEFAULT 'robokassa',amount_kopecks BIGINT NOT NULL CHECK(amount_kopecks>0),currency TEXT NOT NULL DEFAULT 'RUB',generations INTEGER NOT NULL CHECK(generations>0),status TEXT NOT NULL DEFAULT 'created',provider_invoice_id TEXT UNIQUE,created_at TIMESTAMPTZ DEFAULT NOW(),paid_at TIMESTAMPTZ)");
 }
 function auth(req,res,next){
  const token=/^Bearer (.+)$/.exec(req.get("authorization")||"")?.[1];
@@ -54,5 +55,9 @@ app.get("/api/me",auth,async(req,res)=>{
 // Never trust client-reported payment status or balance.
 app.post("/api/generate",auth,(req,res)=>error(res,503,"Генерация ожидает подключения оплаты и провайдера"));
 app.post("/api/video",auth,(req,res)=>error(res,503,"Видео ожидает подключения провайдера"));
-app.get("/api/pricing",(req,res)=>res.json({success:true,available:false,currency:"RUB",plans:[]}));
+app.get("/api/pricing",(req,res)=>res.json({success:true,available:false,currency:"RUB",plans:[],message:"Ожидается активация Робокассы"}));
+app.get("/api/payments/status",auth,(req,res)=>res.json({success:true,provider:"robokassa",enabled:false,reason:"Ожидается активация магазина и настройка защищённых уведомлений"}));
+app.post("/api/payments/create",auth,(req,res)=>error(res,503,"Приём платежей пока не активирован"));
+// ResultURL deliberately not enabled: no payment can be marked paid without
+// verified provider signature, amount, invoice, and idempotent DB transaction.
 (async()=>{if(!process.env.DATABASE_URL||!secret)throw Error("DATABASE_URL and JWT_SECRET required");await init();app.listen(process.env.PORT||3000,"0.0.0.0",()=>console.log("Velora AI server ready"));})().catch(e=>{console.error("Startup:",e.message);process.exit(1);});
