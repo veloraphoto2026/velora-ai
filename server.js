@@ -2,6 +2,7 @@
 const express=require("express"),cors=require("cors"),{Pool}=require("pg"),bcrypt=require("bcryptjs"),jwt=require("jsonwebtoken"),path=require("path");
 const {verifyResult}=require("./robokassa-result");
 const {paymentAction}=require("./payment-order");
+const {emailOf,validEmail,validPassword}=require("./auth-validation");
 const ranvik=require("./ranvik");
 const crypto=require("node:crypto");
 const app=express(),secret=process.env.JWT_SECRET;
@@ -12,8 +13,6 @@ app.use(cors({origin:(origin,callback)=>callback(null,!origin||allowedOrigins.in
 app.use(express.json({limit:"12mb"}));
 app.use(express.urlencoded({extended:false,limit:"32kb"}));
 const error=(res,status,message)=>res.status(status).json({success:false,error:message});
-const emailOf=x=>typeof x==="string"?x.trim().toLowerCase():"";
-const validEmail=x=>x.length<=254&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x);
 const tokenFor=id=>jwt.sign({userId:id},secret,{algorithm:"HS256",expiresIn:"7d"});
 async function init(){
  await pool.query("CREATE TABLE IF NOT EXISTS users(id BIGSERIAL PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,credits INTEGER NOT NULL DEFAULT 0,created_at TIMESTAMPTZ DEFAULT NOW())");
@@ -35,7 +34,7 @@ app.get("/api/providers",(req,res)=>res.json({success:true,ranvik:{image:process
 app.post("/api/register",async(req,res)=>{
  try{
  const email=emailOf(req.body?.email),password=req.body?.password;
- if(!validEmail(email)||typeof password!=="string"||password.length<8||password.length>128)return error(res,400,"Проверьте email и пароль (8–128 символов)");
+ if(!validEmail(email)||!validPassword(password))return error(res,400,"Проверьте email и пароль (8–128 символов)");
  if(!secret)return error(res,503,"Регистрация временно недоступна");
  const hash=await bcrypt.hash(password,12);
  const r=await pool.query("INSERT INTO users(email,password_hash,credits) VALUES($1,$2,0) ON CONFLICT(email) DO NOTHING RETURNING id,email,credits",[email,hash]);
