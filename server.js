@@ -46,7 +46,7 @@ app.post("/api/register",async(req,res)=>{
 app.post("/api/login",async(req,res)=>{
  try{
  const email=emailOf(req.body?.email),password=req.body?.password;
- if(!validEmail(email)||typeof password!=="string")return error(res,400,"Введите email и пароль");
+ if(!validEmail(email)||typeof password!=="string"||password.length>128)return error(res,400,"Введите корректный email и пароль");
  if(!secret)return error(res,503,"Вход временно недоступен");
  const r=await pool.query("SELECT id,email,password_hash,credits FROM users WHERE email=$1",[email]);
  const u=r.rows[0];
