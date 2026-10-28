@@ -1,8 +1,9 @@
 "use strict";
-const express=require("express"),cors=require("cors"),{Pool}=require("pg"),bcrypt=require("bcryptjs"),jwt=require("jsonwebtoken"),path=require("path");
+const express=require("express"),cors=require("cors"),{Pool}=require("pg"),bcrypt=require("bcryptjs"),path=require("path");
 const {verifyResult}=require("./robokassa-result");
 const {paymentAction}=require("./payment-order");
 const {emailOf,validEmail,validPassword}=require("./auth-validation");
+const {tokenFor,userIdFromToken}=require("./auth-token");
 const ranvik=require("./ranvik");
 const crypto=require("node:crypto");
 const app=express(),secret=process.env.JWT_SECRET;
@@ -13,7 +14,6 @@ app.use(cors({origin:(origin,callback)=>callback(null,!origin||allowedOrigins.in
 app.use(express.json({limit:"12mb"}));
 app.use(express.urlencoded({extended:false,limit:"32kb"}));
 const error=(res,status,message)=>res.status(status).json({success:false,error:message});
-const tokenFor=id=>jwt.sign({userId:id},secret,{algorithm:"HS256",expiresIn:"7d"});
 async function init(){
  await pool.query("CREATE TABLE IF NOT EXISTS users(id BIGSERIAL PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,credits INTEGER NOT NULL DEFAULT 0,created_at TIMESTAMPTZ DEFAULT NOW())");
  // Preserve all existing balances; zero applies only to future registrations.
@@ -23,13 +23,10 @@ async function init(){
 }
 function auth(req,res,next){
  const token=/^Bearer (.+)$/.exec(req.get("authorization")||"")?.[1];
- if(!token||!secret)return error(res,401,"Требуется вход");
- try{
-  const claims=jwt.verify(token,secret,{algorithms:["HS256"]});
-  if(!claims||!(typeof claims.userId==="string"&&/^[1-9]\d*$/.test(claims.userId)||Number.isSafeInteger(claims.userId)&&claims.userId>0))return error(res,401,"Сессия недействительна");
-  req.userId=claims.userId;next();
- }
- catch{return error(res,401,"Сессия недействительна");}
+ const userId=userIdFromToken(token,secret);
+ if(!userId)return error(res,401,"Сессия недействительна");
+ req.userId=userId;
+ next();
 }
 app.get("/",(req,res)=>res.sendFile(path.join(__dirname,"index.html")));
 app.get("/oferta.html",(req,res)=>res.sendFile(path.join(__dirname,"oferta.html")));
@@ -43,7 +40,7 @@ app.post("/api/register",async(req,res)=>{
  const hash=await bcrypt.hash(password,12);
  const r=await pool.query("INSERT INTO users(email,password_hash,credits) VALUES($1,$2,0) ON CONFLICT(email) DO NOTHING RETURNING id,email,credits",[email,hash]);
  if(!r.rowCount)return error(res,409,"Email уже зарегистрирован");
- return res.status(201).json({success:true,token:tokenFor(r.rows[0].id),user:r.rows[0]});
+ return res.status(201).json({success:true,token:tokenFor(r.rows[0].id,secret),user:r.rows[0]});
  }catch(e){console.error("Register:",e.message);return error(res,500,"Ошибка регистрации");}
 });
 app.post("/api/login",async(req,res)=>{
@@ -54,7 +51,7 @@ app.post("/api/login",async(req,res)=>{
  const r=await pool.query("SELECT id,email,password_hash,credits FROM users WHERE email=$1",[email]);
  const u=r.rows[0];
  if(!u||!(await bcrypt.compare(password,u.password_hash)))return error(res,401,"Неверный email или пароль");
- return res.json({success:true,token:tokenFor(u.id),user:{id:u.id,email:u.email,credits:u.credits}});
+ return res.json({success:true,token:tokenFor(u.id,secret),user:{id:u.id,email:u.email,credits:u.credits}});
  }catch(e){console.error("Login:",e.message);return error(res,500,"Ошибка входа");}
 });
 app.get("/api/me",auth,async(req,res)=>{
