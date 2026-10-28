@@ -1,10 +1,10 @@
 "use strict";
 const crypto = require("crypto");
 function verifyResult(payload, password, algorithm = "md5") {
-  if (!password || !payload || typeof payload !== "object") return null;
+  if (!password || !payload || typeof payload !== "object" || Array.isArray(payload)) return null;
   const { OutSum, InvId, SignatureValue } = payload;
   if (typeof OutSum !== "string" || !/^\d+(?:\.\d{1,6})?$/.test(OutSum)) return null;
-  if (typeof InvId !== "string" || !/^[1-9]\d*$/.test(InvId)) return null;
+  if (typeof InvId !== "string" || !/^[1-9]\d*$/.test(InvId) || BigInt(InvId) > 9223372036854775807n) return null;
   if (typeof SignatureValue !== "string" || !/^[a-f\d]+$/i.test(SignatureValue)) return null;
   if (!["md5", "sha256", "sha512"].includes(algorithm)) return null;
   const extra = Object.keys(payload).filter(k => k.startsWith("Shp_")).sort();
