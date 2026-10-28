@@ -63,7 +63,7 @@ app.post("/api/generate",auth,async(req,res)=>{
  if(process.env.RANVIK_GENERATION_READY!=="true"||!ranvik.config().enabled)return error(res,503,"Генерация Ranvik пока проходит проверку");
  const referenceImages=req.body?.referenceImages??[];
  if(!Array.isArray(referenceImages)||referenceImages.length>4)return error(res,400,"Можно загрузить до четырёх фотографий");
- if(referenceImages.length)return error(res,503,"Редактирование фотографий пока не проверено; баланс не списан");
+ if(referenceImages.length||req.body?.image||req.body?.imageUrl||req.body?.photo||req.body?.photos||req.body?.images)return error(res,503,"Редактирование фотографий пока не проверено; баланс не списан");
  const prompt=req.body?.prompt;
  if(typeof prompt!=="string"||prompt.trim().length<2||prompt.length>4000)return error(res,400,"Введите описание изображения");
  let reserved=false;
