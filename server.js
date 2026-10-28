@@ -24,7 +24,11 @@ async function init(){
 function auth(req,res,next){
  const token=/^Bearer (.+)$/.exec(req.get("authorization")||"")?.[1];
  if(!token||!secret)return error(res,401,"Требуется вход");
- try{req.userId=jwt.verify(token,secret,{algorithms:["HS256"]}).userId;next();}
+ try{
+  const claims=jwt.verify(token,secret,{algorithms:["HS256"]});
+  if(!claims||!Number.isSafeInteger(claims.userId)||claims.userId<1)return error(res,401,"Сессия недействительна");
+  req.userId=claims.userId;next();
+ }
  catch{return error(res,401,"Сессия недействительна");}
 }
 app.get("/",(req,res)=>res.sendFile(path.join(__dirname,"index.html")));
