@@ -30,7 +30,7 @@ function auth(req,res,next){
 app.get("/",(req,res)=>res.sendFile(path.join(__dirname,"index.html")));
 app.get("/oferta.html",(req,res)=>res.sendFile(path.join(__dirname,"oferta.html")));
 app.get("/api/health",(req,res)=>res.json({success:true,service:"Velora AI",status:"running"}));
-app.get("/api/providers",(req,res)=>res.json({success:true,ranvik:{image:ranvik.config().enabled,video:false,audio:false,editing:false},payment:payConfig().configured}));
+app.get("/api/providers",(req,res)=>res.json({success:true,ranvik:{image:process.env.RANVIK_GENERATION_READY==="true"&&ranvik.config().enabled,video:false,audio:false,editing:false},payment:payConfig().configured}));
 app.post("/api/register",async(req,res)=>{
  try{
  const email=emailOf(req.body?.email),password=req.body?.password;
@@ -59,7 +59,26 @@ app.get("/api/me",auth,async(req,res)=>{
 });
 // Paid mode: generation disabled until verified payments and provider API are configured.
 // Never trust client-reported payment status or balance.
-app.post("/api/generate",auth,(req,res)=>error(res,503,"Генерация ожидает подключения оплаты и провайдера"));
+app.post("/api/generate",auth,async(req,res)=>{
+ if(process.env.RANVIK_GENERATION_READY!=="true"||!ranvik.config().enabled)return error(res,503,"Генерация Ranvik пока проходит проверку");
+ if(req.body?.image)return error(res,400,"Обработка загруженных фотографий ещё не подключена");
+ const prompt=req.body?.prompt;
+ if(typeof prompt!=="string"||prompt.trim().length<2||prompt.length>4000)return error(res,400,"Введите описание изображения");
+ let reserved=false;
+ try{
+  const debit=await pool.query("UPDATE users SET credits=credits-1 WHERE id=$1 AND credits>=1 RETURNING credits",[req.userId]);
+  if(!debit.rowCount)return error(res,402,"Недостаточно оплаченных генераций");
+  reserved=true;
+  const output=await ranvik.generateImage({prompt});
+  const image=output?.data?.[0]?.url||output?.data?.[0]?.b64_json&&"data:image/png;base64,"+output.data[0].b64_json;
+  if(typeof image!=="string"||!image)throw Error("Unexpected image response");
+  return res.json({success:true,image,credits:debit.rows[0].credits});
+ }catch(e){
+  if(reserved)await pool.query("UPDATE users SET credits=credits+1 WHERE id=$1",[req.userId]).catch(x=>console.error("Refund failed:",x.message));
+  console.error("Ranvik generation:",e.message);
+  return error(res,502,"Не удалось создать изображение; генерация возвращена на баланс");
+ }
+});
 app.post("/api/video",auth,(req,res)=>error(res,503,"Видео ожидает подключения провайдера"));
 const payConfig=()=>{
  const count=Number(process.env.VELORA_PACK_GENERATIONS||"1");
