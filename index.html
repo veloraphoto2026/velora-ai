@@ -25,7 +25,7 @@ footer{text-align:center;padding:30px;color:#999;font-size:13px}
 <button id="authSubmit" type="button">Войти</button><button id="authToggle" class="secondary" type="button">Создать аккаунт</button>
 <div id="authStatus" class="status" role="status" aria-live="polite"></div></section>
 <section id="accountPanel" class="panel hidden"><h2>Личный кабинет</h2><p id="accountEmail" class="muted"></p>
-<p>Баланс генераций: <span id="credits" class="badge">—</span></p><p class="note">Новые аккаунты не получают бесплатных генераций. Платная генерация станет доступна после подключения оплаты. Баланс определяется сервером.</p>
+<p>Баланс генераций: <span id="credits" class="badge">—</span></p><button id="refreshBalance" class="secondary" type="button">Обновить баланс</button><p id="balanceStatus" class="status" role="status" aria-live="polite"></p><p class="note">Новые аккаунты не получают бесплатных генераций. Платная генерация станет доступна после подключения оплаты. Баланс определяется сервером.</p>
 <button id="logout" class="secondary" type="button">Выйти</button></section>
 <section id="studioPanel" class="panel hidden"><h2>ИИ-фотостудия</h2>
 <label for="photo">📸 Загрузи фотографию</label><input type="file" id="photo" accept="image/jpeg,image/png">
@@ -78,6 +78,17 @@ token=newToken;currentEmail=email;sessionStorage.setItem("velora_token",token);s
 $("credits").textContent=Number.isFinite(Number(data.credits))&&data.credits!==undefined?data.credits:(data.user?.credits??"—");
 showAccount(true);$("password").value="";
 }catch(e){$("authStatus").textContent=e.message}finally{$("authSubmit").disabled=false}};
+async function refreshBalance(){
+ const btn=$("refreshBalance");btn.disabled=true;$("balanceStatus").textContent="Проверяем баланс…";
+ try{
+  const data=await api("/api/me",{headers:{"Authorization":"Bearer "+token}});
+  if(!data.user||!Number.isSafeInteger(data.user.credits)||data.user.credits<0)throw new Error("Не удалось получить баланс");
+  $("credits").textContent=data.user.credits;
+  $("balanceStatus").textContent="Баланс обновлён";
+ }catch(e){$("balanceStatus").textContent=e.message}
+ finally{btn.disabled=false}
+}
+$("refreshBalance").onclick=refreshBalance;
 $("logout").onclick=()=>{token="";currentEmail="";sessionStorage.removeItem("velora_token");sessionStorage.removeItem("velora_email");$("credits").textContent="—";showAccount(false)};
 $("photo").onchange=()=>{if(previewUrl)URL.revokeObjectURL(previewUrl);$("preview").style.display="none";const f=$("photo").files[0];if(!f)return;if(!["image/jpeg","image/png"].includes(f.type)||f.size>8*1024*1024){$("status").textContent="Нужен JPEG/PNG не больше 8 МБ";$("photo").value="";return}previewUrl=URL.createObjectURL(f);$("preview").src=previewUrl;$("preview").style.display="block";$("status").textContent="Фото загружено"};
 function renderHistory(){const el=$("history");el.replaceChildren();let items=[];try{items=JSON.parse(localStorage.getItem("velora_history_"+currentEmail)||"[]")}catch{};items.forEach(url=>{const a=document.createElement("a");a.href=url;a.target="_blank";a.rel="noopener noreferrer";const img=document.createElement("img");img.src=url;img.alt="Ранее созданное изображение";a.appendChild(img);el.appendChild(a)})}
