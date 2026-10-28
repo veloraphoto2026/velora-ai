@@ -1,6 +1,7 @@
 "use strict";
 const express=require("express"),cors=require("cors"),{Pool}=require("pg"),bcrypt=require("bcryptjs"),jwt=require("jsonwebtoken"),path=require("path");
 const {verifyResult}=require("./robokassa-result");
+const {paymentAction}=require("./payment-order");
 const ranvik=require("./ranvik");
 const crypto=require("node:crypto");
 const app=express(),secret=process.env.JWT_SECRET;
@@ -123,10 +124,11 @@ app.post("/api/payments/robokassa/result",async(req,res)=>{
   const r=await client.query("SELECT user_id,amount_kopecks,generations,status FROM payment_orders WHERE id=$1 FOR UPDATE",[verified.invoiceId]);
   const order=r.rows[0];
   if(!order||BigInt(order.amount_kopecks)!==verified.kopecks){await client.query("ROLLBACK");return res.sendStatus(400);}
-  if(order.status==="created"){
+  const action=paymentAction(order.status);
+  if(action==="credit"){
    await client.query("UPDATE payment_orders SET status='paid',paid_at=NOW() WHERE id=$1",[verified.invoiceId]);
    await client.query("UPDATE users SET credits=credits+$1 WHERE id=$2",[order.generations,order.user_id]);
-  }else if(order.status!=="paid"){await client.query("ROLLBACK");return res.sendStatus(409);}
+  }else if(action!=="acknowledge"){await client.query("ROLLBACK");return res.sendStatus(409);}
   await client.query("COMMIT");
   return res.type("text/plain").send("OK"+verified.invoiceId);
  }catch(e){await client.query("ROLLBACK").catch(()=>{});console.error("Payment callback:",e.message);return res.sendStatus(500);}
