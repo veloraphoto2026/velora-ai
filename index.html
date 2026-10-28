@@ -33,8 +33,8 @@ footer{text-align:center;padding:30px;color:#999;font-size:13px}
 <label for="mode">✨ Выбери режим</label><select id="mode"><option value="real">Реалистичная фотосессия</option><option value="cartoon">Мультяшная обработка</option></select>
 <label for="style">🎨 Выбери стиль</label><select id="style"></select>
 <label for="prompt">📝 Твои пожелания</label><textarea id="prompt" placeholder="Например: вечернее платье, Париж, мягкий свет"></textarea>
-<button id="generate" type="button">✨ Создать фотографию</button>
-<p class="note">Генерация временно недоступна: подключаются оплата и защищённый провайдер. Тестовый ключ в браузере не используется.</p>
+<button id="generate" type="button" disabled aria-disabled="true">✨ Создание фото пока недоступно</button>
+<p class="note">Обработка загруженных фотографий ещё не подключена к Ranvik. Кнопка генерации отключена, чтобы исключить случайное списание.</p>
 <div id="status" class="status" role="status" aria-live="polite"></div></section>
 <section id="paymentPanel" class="panel hidden"><h2>Оплата генераций</h2><p id="priceInfo" class="note">Проверяем доступность оплаты…</p><button id="payButton" type="button" disabled>Купить генерации</button><p id="payStatus" class="status" role="status"></p></section>
 <section id="resultPanel" class="panel hidden"><h2>Результат</h2><img id="result" class="preview" alt="Результат генерации"><button id="download" type="button" class="hidden">📥 Сохранить фотографию</button></section>
