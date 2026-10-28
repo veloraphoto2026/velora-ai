@@ -26,7 +26,7 @@ function auth(req,res,next){
  if(!token||!secret)return error(res,401,"Требуется вход");
  try{
   const claims=jwt.verify(token,secret,{algorithms:["HS256"]});
-  if(!claims||!Number.isSafeInteger(claims.userId)||claims.userId<1)return error(res,401,"Сессия недействительна");
+  if(!claims||!(typeof claims.userId==="string"&&/^[1-9]\d*$/.test(claims.userId)||Number.isSafeInteger(claims.userId)&&claims.userId>0))return error(res,401,"Сессия недействительна");
   req.userId=claims.userId;next();
  }
  catch{return error(res,401,"Сессия недействительна");}
