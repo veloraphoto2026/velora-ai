@@ -61,7 +61,9 @@ app.get("/api/me",auth,async(req,res)=>{
 // Never trust client-reported payment status or balance.
 app.post("/api/generate",auth,async(req,res)=>{
  if(process.env.RANVIK_GENERATION_READY!=="true"||!ranvik.config().enabled)return error(res,503,"Генерация Ranvik пока проходит проверку");
- if(req.body?.image)return error(res,400,"Обработка загруженных фотографий ещё не подключена");
+ const referenceImages=req.body?.referenceImages??[];
+ if(!Array.isArray(referenceImages)||referenceImages.length>4)return error(res,400,"Можно загрузить до четырёх фотографий");
+ if(referenceImages.length)return error(res,503,"Редактирование фотографий пока не проверено; баланс не списан");
  const prompt=req.body?.prompt;
  if(typeof prompt!=="string"||prompt.trim().length<2||prompt.length>4000)return error(res,400,"Введите описание изображения");
  let reserved=false;
@@ -69,7 +71,7 @@ app.post("/api/generate",auth,async(req,res)=>{
   const debit=await pool.query("UPDATE users SET credits=credits-1 WHERE id=$1 AND credits>=1 RETURNING credits",[req.userId]);
   if(!debit.rowCount)return error(res,402,"Недостаточно оплаченных генераций");
   reserved=true;
-  const output=await ranvik.generateImage({prompt});
+  const output=await ranvik.generateImage({prompt,referenceImages});
   const image=output?.data?.[0]?.url||output?.data?.[0]?.b64_json&&"data:image/png;base64,"+output.data[0].b64_json;
   if(typeof image!=="string"||!image)throw Error("Unexpected image response");
   return res.json({success:true,image,credits:debit.rows[0].credits});
