@@ -59,8 +59,8 @@ app.get("/api/me",auth,async(req,res)=>{
 app.post("/api/generate",auth,(req,res)=>error(res,503,"Генерация ожидает подключения оплаты и провайдера"));
 app.post("/api/video",auth,(req,res)=>error(res,503,"Видео ожидает подключения провайдера"));
 const payConfig=()=>{
- const count=Number(process.env.VELORA_PACK_GENERATIONS);
- const kopecks=Number(process.env.VELORA_PACK_PRICE_KOPECKS);
+ const count=Number(process.env.VELORA_PACK_GENERATIONS||"1");
+ const kopecks=Number(process.env.VELORA_PACK_PRICE_KOPECKS||"4900");
  const algorithm=(process.env.ROBOKASSA_HASH||"md5").toLowerCase();
  const configured=process.env.ROBOKASSA_READY==="true"&&!!process.env.ROBOKASSA_MERCHANT_LOGIN&&!!process.env.ROBOKASSA_PASSWORD1&&!!process.env.ROBOKASSA_PASSWORD2&&Number.isSafeInteger(count)&&count>0&&Number.isSafeInteger(kopecks)&&kopecks>0&&["md5","sha256","sha512"].includes(algorithm);
  return {configured,count,kopecks,algorithm};
