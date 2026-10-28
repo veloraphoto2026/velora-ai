@@ -9,7 +9,8 @@ async function generateImage({prompt,referenceImages=[]}){
  const {enabled,model}=config();
  if(!enabled)throw Error("Ranvik not configured");
  if(typeof prompt!=="string"||prompt.trim().length<2||prompt.length>4000)throw Error("Invalid prompt");
- if(!Array.isArray(referenceImages)||referenceImages.length>1)throw Error("Invalid reference images");
+ if(!Array.isArray(referenceImages)||referenceImages.length>4)throw Error("Invalid reference images");
+ if(referenceImages.some(item=>!item||typeof item!=="object"||Array.isArray(item)))throw Error("Reference image must be an object");
  const {width,height}=MODELS[model];
  const controller=new AbortController();
  const timeout=setTimeout(()=>controller.abort(),120000);
