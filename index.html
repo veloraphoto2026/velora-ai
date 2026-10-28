@@ -36,6 +36,7 @@ footer{text-align:center;padding:30px;color:#999;font-size:13px}
 <button id="generate" type="button">✨ Создать фотографию</button>
 <p class="note">Генерация временно недоступна: подключаются оплата и защищённый провайдер. Тестовый ключ в браузере не используется.</p>
 <div id="status" class="status" role="status" aria-live="polite"></div></section>
+<section id="paymentPanel" class="panel hidden"><h2>Оплата генераций</h2><p id="priceInfo" class="note">Проверяем доступность оплаты…</p><button id="payButton" type="button" disabled>Купить генерации</button><p id="payStatus" class="status" role="status"></p></section>
 <section id="resultPanel" class="panel hidden"><h2>Результат</h2><img id="result" class="preview" alt="Результат генерации"><button id="download" type="button" class="hidden">📥 Сохранить фотографию</button></section>
 <section id="historyPanel" class="panel hidden"><h2>История на этом устройстве</h2><p class="note">Сохраняются только ссылки на последние изображения в этом браузере. Это не облачная история аккаунта.</p><div id="history" class="history"></div></section>
 </main><footer>© 2026 VELORA AI · Бета-версия<br><a href="/oferta.html" style="display:inline-block;margin-top:12px;color:#d9b76e;text-decoration:underline">Публичная оферта</a></footer>
@@ -48,7 +49,23 @@ let registering=false,previewUrl=null,latestImage="";
 const styles={real:["Деловая фотосессия","Fashion","Путешествия","Романтика","Кинопортрет","Luxury"],cartoon:["3D-анимация","Аниме","Мультяшный 3D-портрет","Рисованная иллюстрация","Сказочный персонаж","Романтический мультфильм"]};
 function updateStyles(){ $("style").replaceChildren(...styles[$("mode").value].map(s=>new Option(s,s))) }
 $("mode").addEventListener("change",updateStyles);updateStyles();
-function showAccount(on){$("authPanel").classList.toggle("hidden",on);["accountPanel","studioPanel","resultPanel","historyPanel"].forEach(id=>$(id).classList.toggle("hidden",!on));$("accountEmail").textContent=currentEmail;if(on)renderHistory()}
+function showAccount(on){$("authPanel").classList.toggle("hidden",on);["accountPanel","studioPanel","paymentPanel","resultPanel","historyPanel"].forEach(id=>$(id).classList.toggle("hidden",!on));$("accountEmail").textContent=currentEmail;if(on){renderHistory();loadPricing()}}
+async function loadPricing(){
+ const btn=$("payButton");btn.disabled=true;
+ try{const data=await api("/api/pricing");
+ const p=data.plans?.find(x=>x.id==="standard");
+ if(!data.available||!p){$("priceInfo").textContent=data.message||"Оплата пока недоступна";return}
+ $("priceInfo").textContent=p.generations+" генераций — "+(p.amount_kopecks/100).toFixed(2)+" ₽";
+ btn.disabled=false;
+ }catch(e){$("priceInfo").textContent="Оплата пока недоступна"}
+}
+$("payButton").onclick=async()=>{
+ const btn=$("payButton");btn.disabled=true;$("payStatus").textContent="Создаём заказ…";
+ try{const d=await api("/api/payments/create",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+token},body:JSON.stringify({plan:"standard"})});
+ if(!d.paymentUrl||!d.paymentUrl.startsWith("https://auth.robokassa.ru/"))throw new Error("Некорректная ссылка оплаты");
+ window.location.assign(d.paymentUrl);
+ }catch(e){$("payStatus").textContent=e.message;btn.disabled=false}
+};
 function setAuthMode(){ $("authTitle").textContent=registering?"Регистрация":"Вход в Velora AI";$("authSubmit").textContent=registering?"Зарегистрироваться":"Войти";$("authToggle").textContent=registering?"У меня уже есть аккаунт":"Создать аккаунт";$("authStatus").textContent="" }
 $("authToggle").onclick=()=>{registering=!registering;setAuthMode()};
 async function api(path,options={}){const r=await fetch(API+path,options);const body=await r.json().catch(()=>({}));if(!r.ok)throw new Error(body.error||body.message||"Ошибка сервера ("+r.status+")");return body}
