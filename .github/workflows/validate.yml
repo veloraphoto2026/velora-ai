@@ -1,0 +1,19 @@
+name: Validate Velora API
+on:
+  push:
+    branches: [rewrite/paid-server-v2]
+  pull_request:
+    branches: [main]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: node --check server.js
+      - run: node --check ranvik.js
