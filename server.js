@@ -55,6 +55,11 @@ app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
+// PUBLIC OFFER — serve the existing HTML document without exposing other files
+app.get("/oferta.html", (req, res) => {
+  res.sendFile(path.join(__dirname, "oferta.html"));
+});
+
 // HEALTH CHECK
 
 app.get("/api/health", (req, res) => {
