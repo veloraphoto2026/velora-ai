@@ -63,6 +63,7 @@ $("payButton").onclick=async()=>{
  const btn=$("payButton");btn.disabled=true;$("payStatus").textContent="Создаём заказ…";
  try{const d=await api("/api/payments/create",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+token},body:JSON.stringify({plan:"standard"})});
  if(!d.paymentUrl||!d.paymentUrl.startsWith("https://auth.robokassa.ru/"))throw new Error("Некорректная ссылка оплаты");
+ sessionStorage.setItem("velora_pending_payment",d.invoiceId||"");
  window.location.assign(d.paymentUrl);
  }catch(e){$("payStatus").textContent=e.message;btn.disabled=false}
 };
@@ -89,6 +90,13 @@ async function refreshBalance(){
  finally{btn.disabled=false}
 }
 $("refreshBalance").onclick=refreshBalance;
+function paymentReturnNotice(){
+ const pending=sessionStorage.getItem("velora_pending_payment");
+ if(!pending)return;
+ sessionStorage.removeItem("velora_pending_payment");
+ $("balanceStatus").textContent="Если вы завершили оплату, нажмите «Обновить баланс». Начисление произойдёт только после подтверждения Robokassa.";
+}
+paymentReturnNotice();
 $("logout").onclick=()=>{token="";currentEmail="";sessionStorage.removeItem("velora_token");sessionStorage.removeItem("velora_email");$("credits").textContent="—";showAccount(false)};
 $("photo").onchange=()=>{if(previewUrl)URL.revokeObjectURL(previewUrl);$("preview").style.display="none";const f=$("photo").files[0];if(!f)return;if(!["image/jpeg","image/png"].includes(f.type)||f.size>8*1024*1024){$("status").textContent="Нужен JPEG/PNG не больше 8 МБ";$("photo").value="";return}previewUrl=URL.createObjectURL(f);$("preview").src=previewUrl;$("preview").style.display="block";$("status").textContent="Фото загружено"};
 function renderHistory(){const el=$("history");el.replaceChildren();let items=[];try{items=JSON.parse(localStorage.getItem("velora_history_"+currentEmail)||"[]")}catch{};items.forEach(url=>{const a=document.createElement("a");a.href=url;a.target="_blank";a.rel="noopener noreferrer";const img=document.createElement("img");img.src=url;img.alt="Ранее созданное изображение";a.appendChild(img);el.appendChild(a)})}
