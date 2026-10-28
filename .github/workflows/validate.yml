@@ -1,5 +1,6 @@
 name: Validate Velora API
 on:
+  workflow_dispatch:
   push:
     branches: [rewrite/paid-server-v2]
   pull_request:
