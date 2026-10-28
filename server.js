@@ -32,14 +32,14 @@ async function initDatabase() {
       id BIGSERIAL PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
-      credits INTEGER NOT NULL DEFAULT 2,
+      credits INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
 
     await pool.query(`
     ALTER TABLE users
-    ALTER COLUMN credits SET DEFAULT 2
+    ALTER COLUMN credits SET DEFAULT 0
   `);
 
   console.log("Velora AI database ready");
@@ -302,7 +302,7 @@ app.post("/api/generate", authenticate, async (req, res) => {
       return res.status(503).json({ success: false, error: "Генерация временно недоступна" });
     }
 
-    const debit = await pool.query(
+    // Paid-only launch guard: never charge or generate without verified payment.\n    // Existing balances remain untouched for migration/reconciliation.\n    return res.status(503).json({ success: false, error: "Платные генерации пока не подключены. Оплата не списана." });\n\n    const debit = await pool.query(
       "UPDATE users SET credits = credits - 1 WHERE id = $1 AND credits > 0 RETURNING credits",
       [req.userId]
     );
