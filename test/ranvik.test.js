@@ -53,3 +53,17 @@ test("Ranvik reports upstream errors without revealing API token",async()=>{
   else process.env.RANVIK_API_KEY=oldKey;
  }
 });
+
+test("Ranvik rejects malformed reference image without calling provider",async()=>{
+ const oldKey=process.env.RANVIK_API_KEY,oldFetch=global.fetch;
+ process.env.RANVIK_API_KEY="test-placeholder";
+ global.fetch=()=>{throw Error("Provider must not be called")};
+ try{
+  await assert.rejects(ranvik.generateImage({prompt:"portrait",referenceImages:[{}]}),/Invalid reference image object/);
+  await assert.rejects(ranvik.generateImage({prompt:"portrait",referenceImages:[{image:"https://example.invalid/p.png",strength:2}]}),/Invalid reference image object/);
+ }finally{
+  global.fetch=oldFetch;
+  if(oldKey===undefined)delete process.env.RANVIK_API_KEY;
+  else process.env.RANVIK_API_KEY=oldKey;
+ }
+});
