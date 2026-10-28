@@ -1,6 +1,7 @@
 "use strict";
 const express=require("express"),cors=require("cors"),{Pool}=require("pg"),bcrypt=require("bcryptjs"),jwt=require("jsonwebtoken"),path=require("path");
 const {verifyResult}=require("./robokassa-result");
+const ranvik=require("./ranvik");
 const crypto=require("node:crypto");
 const app=express(),secret=process.env.JWT_SECRET;
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_SSL==="true"?{rejectUnauthorized:true}:undefined});
@@ -28,6 +29,7 @@ function auth(req,res,next){
 app.get("/",(req,res)=>res.sendFile(path.join(__dirname,"index.html")));
 app.get("/oferta.html",(req,res)=>res.sendFile(path.join(__dirname,"oferta.html")));
 app.get("/api/health",(req,res)=>res.json({success:true,service:"Velora AI",status:"running"}));
+app.get("/api/providers",(req,res)=>res.json({success:true,ranvik:{image:ranvik.config().enabled,video:false,audio:false,editing:false},payment:payConfig().configured}));
 app.post("/api/register",async(req,res)=>{
  try{
  const email=emailOf(req.body?.email),password=req.body?.password;
