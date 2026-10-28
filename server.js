@@ -1,6 +1,7 @@
 "use strict";
 const express=require("express"),cors=require("cors"),{Pool}=require("pg"),bcrypt=require("bcryptjs"),jwt=require("jsonwebtoken"),path=require("path");
 const {verifyResult}=require("./robokassa-result");
+const crypto=require("node:crypto");
 const app=express(),secret=process.env.JWT_SECRET;
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_SSL==="true"?{rejectUnauthorized:true}:undefined});
 app.disable("x-powered-by");
@@ -57,9 +58,31 @@ app.get("/api/me",auth,async(req,res)=>{
 // Never trust client-reported payment status or balance.
 app.post("/api/generate",auth,(req,res)=>error(res,503,"Генерация ожидает подключения оплаты и провайдера"));
 app.post("/api/video",auth,(req,res)=>error(res,503,"Видео ожидает подключения провайдера"));
-app.get("/api/pricing",(req,res)=>res.json({success:true,available:false,currency:"RUB",plans:[],message:"Ожидается активация Робокассы"}));
-app.get("/api/payments/status",auth,(req,res)=>res.json({success:true,provider:"robokassa",enabled:false,reason:"Ожидается активация магазина и настройка защищённых уведомлений"}));
-app.post("/api/payments/create",auth,(req,res)=>error(res,503,"Приём платежей пока не активирован"));
+const payConfig=()=>{
+ const count=Number(process.env.VELORA_PACK_GENERATIONS);
+ const kopecks=Number(process.env.VELORA_PACK_PRICE_KOPECKS);
+ const algorithm=(process.env.ROBOKASSA_HASH||"md5").toLowerCase();
+ const configured=process.env.ROBOKASSA_READY==="true"&&!!process.env.ROBOKASSA_MERCHANT_LOGIN&&!!process.env.ROBOKASSA_PASSWORD1&&!!process.env.ROBOKASSA_PASSWORD2&&Number.isSafeInteger(count)&&count>0&&Number.isSafeInteger(kopecks)&&kopecks>0&&["md5","sha256","sha512"].includes(algorithm);
+ return {configured,count,kopecks,algorithm};
+};
+app.get("/api/pricing",(req,res)=>{
+ const p=payConfig();
+ res.json({success:true,available:p.configured,currency:"RUB",plans:p.configured?[{id:"standard",generations:p.count,amount_kopecks:p.kopecks}]:[],message:p.configured?"":"Оплата ожидает активации и настройки магазина"});
+});
+app.get("/api/payments/status",auth,(req,res)=>res.json({success:true,provider:"robokassa",enabled:payConfig().configured}));
+app.post("/api/payments/create",auth,async(req,res)=>{
+ const p=payConfig();
+ if(!p.configured)return error(res,503,"Оплата ещё не подключена");
+ if(req.body?.plan!=="standard")return error(res,400,"Неверный тариф");
+ try{
+  const order=await pool.query("INSERT INTO payment_orders(user_id,amount_kopecks,generations) VALUES($1,$2,$3) RETURNING id",[req.userId,p.kopecks,p.count]);
+  const invoice=String(order.rows[0].id),sum=(p.kopecks/100).toFixed(2);
+  const signature=crypto.createHash(p.algorithm).update([process.env.ROBOKASSA_MERCHANT_LOGIN,sum,invoice,process.env.ROBOKASSA_PASSWORD1].join(":"),"utf8").digest("hex");
+  const url=new URL("https://auth.robokassa.ru/Merchant/Index.aspx");
+  for(const [k,v] of Object.entries({MerchantLogin:process.env.ROBOKASSA_MERCHANT_LOGIN,OutSum:sum,InvId:invoice,Description:"Velora AI — пакет генераций",SignatureValue:signature,Culture:"ru"}))url.searchParams.set(k,v);
+  return res.json({success:true,invoiceId:invoice,paymentUrl:url.toString()});
+ }catch(e){console.error("Payment create:",e.message);return error(res,500,"Не удалось создать заказ");}
+});
 // Server-to-server callback; never accept browser redirect as payment proof.
 app.post("/api/payments/robokassa/result",async(req,res)=>{
  const verified=verifyResult(req.body,process.env.ROBOKASSA_PASSWORD2,(process.env.ROBOKASSA_HASH||"md5").toLowerCase());
