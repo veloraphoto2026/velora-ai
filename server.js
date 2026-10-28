@@ -76,9 +76,15 @@ app.post("/api/generate",auth,async(req,res)=>{
   if(typeof image!=="string"||!image)throw Error("Unexpected image response");
   return res.json({success:true,image,credits:debit.rows[0].credits});
  }catch(e){
-  if(reserved)await pool.query("UPDATE users SET credits=credits+1 WHERE id=$1",[req.userId]).catch(x=>console.error("Refund failed:",x.message));
+  let refunded=!reserved;
+  if(reserved){
+   try{
+    const refund=await pool.query("UPDATE users SET credits=credits+1 WHERE id=$1 RETURNING credits",[req.userId]);
+    refunded=refund.rowCount===1;
+   }catch(refundError){console.error("Refund failed:",refundError.message);}
+  }
   console.error("Ranvik generation:",e.message);
-  return error(res,502,"Не удалось создать изображение; генерация возвращена на баланс");
+  return error(res,502,refunded?"Не удалось создать изображение; генерация возвращена на баланс":"Не удалось создать изображение. Возврат генерации требует проверки поддержки");
  }
 });
 app.post("/api/video",auth,(req,res)=>error(res,503,"Видео ожидает подключения провайдера"));
