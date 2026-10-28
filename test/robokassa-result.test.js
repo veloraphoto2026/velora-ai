@@ -33,3 +33,11 @@ test("rejects tampered custom field",()=>{
  const p=payload("100.00","7",{Shp_user:"8"});p.Shp_user="9";
  assert.equal(verifyResult(p,password),null);
 });
+
+test("rejects array payloads and invoice IDs outside PostgreSQL BIGINT",()=>{
+ assert.equal(verifyResult([],password),null);
+ assert.equal(verifyResult(payload("10.00","9223372036854775808"),password),null);
+});
+test("accepts largest signed PostgreSQL BIGINT invoice",()=>{
+ assert.deepEqual(verifyResult(payload("10.00","9223372036854775807"),password),{invoiceId:"9223372036854775807",kopecks:1000n});
+});
