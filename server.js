@@ -1,10 +1,12 @@
 "use strict";
 const express=require("express"),cors=require("cors"),{Pool}=require("pg"),bcrypt=require("bcryptjs"),jwt=require("jsonwebtoken"),path=require("path");
+const {verifyResult}=require("./robokassa-result");
 const app=express(),secret=process.env.JWT_SECRET;
 const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_SSL==="true"?{rejectUnauthorized:true}:undefined});
 app.disable("x-powered-by");
 app.use(cors({origin:process.env.FRONTEND_ORIGIN?process.env.FRONTEND_ORIGIN.split(",").map(x=>x.trim()):false}));
 app.use(express.json({limit:"12mb"}));
+app.use(express.urlencoded({extended:false,limit:"32kb"}));
 const error=(res,status,message)=>res.status(status).json({success:false,error:message});
 const emailOf=x=>typeof x==="string"?x.trim().toLowerCase():"";
 const validEmail=x=>x.length<=254&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x);
@@ -58,6 +60,23 @@ app.post("/api/video",auth,(req,res)=>error(res,503,"Видео ожидает �
 app.get("/api/pricing",(req,res)=>res.json({success:true,available:false,currency:"RUB",plans:[],message:"Ожидается активация Робокассы"}));
 app.get("/api/payments/status",auth,(req,res)=>res.json({success:true,provider:"robokassa",enabled:false,reason:"Ожидается активация магазина и настройка защищённых уведомлений"}));
 app.post("/api/payments/create",auth,(req,res)=>error(res,503,"Приём платежей пока не активирован"));
-// ResultURL deliberately not enabled: no payment can be marked paid without
-// verified provider signature, amount, invoice, and idempotent DB transaction.
+// Server-to-server callback; never accept browser redirect as payment proof.
+app.post("/api/payments/robokassa/result",async(req,res)=>{
+ const verified=verifyResult(req.body,process.env.ROBOKASSA_PASSWORD2,(process.env.ROBOKASSA_HASH||"md5").toLowerCase());
+ if(!verified)return res.sendStatus(403);
+ const client=await pool.connect();
+ try{
+  await client.query("BEGIN");
+  const r=await client.query("SELECT user_id,amount_kopecks,generations,status FROM payment_orders WHERE id=$1 FOR UPDATE",[verified.invoiceId]);
+  const order=r.rows[0];
+  if(!order||BigInt(order.amount_kopecks)!==verified.kopecks){await client.query("ROLLBACK");return res.sendStatus(400);}
+  if(order.status==="created"){
+   await client.query("UPDATE payment_orders SET status='paid',paid_at=NOW() WHERE id=$1",[verified.invoiceId]);
+   await client.query("UPDATE users SET credits=credits+$1 WHERE id=$2",[order.generations,order.user_id]);
+  }else if(order.status!=="paid"){await client.query("ROLLBACK");return res.sendStatus(409);}
+  await client.query("COMMIT");
+  return res.type("text/plain").send("OK"+verified.invoiceId);
+ }catch(e){await client.query("ROLLBACK").catch(()=>{});console.error("Payment callback:",e.message);return res.sendStatus(500);}
+ finally{client.release();}
+});
 (async()=>{if(!process.env.DATABASE_URL||!secret)throw Error("DATABASE_URL and JWT_SECRET required");await init();app.listen(process.env.PORT||3000,"0.0.0.0",()=>console.log("Velora AI server ready"));})().catch(e=>{console.error("Startup:",e.message);process.exit(1);});
