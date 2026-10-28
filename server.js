@@ -1,370 +1,105 @@
-const express = require("express");
-const cors = require("cors");
-const Replicate = require("replicate");
-const { Pool } = require("pg");
-const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken");
-const path = require("path");
-
-const app = express();
-
-app.use(cors());
-app.use(express.json({ limit: "15mb" }));
-
-const replicate = new Replicate({
-  auth: process.env.REPLICATE_API_TOKEN
-});
-
-// DATABASE
-
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL
-    ? { rejectUnauthorized: false }
-    : undefined
-});
-
-// CREATE USERS TABLE
-
-async function initDatabase() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS users (
-      id BIGSERIAL PRIMARY KEY,
-      email TEXT UNIQUE NOT NULL,
-      password_hash TEXT NOT NULL,
-      credits INTEGER NOT NULL DEFAULT 2,
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
-
-    await pool.query(`
-    ALTER TABLE users
-    ALTER COLUMN credits SET DEFAULT 2
-  `);
-
-  console.log("Velora AI database ready");
+"use strict";
+const express=require("express"),cors=require("cors"),{Pool}=require("pg"),bcrypt=require("bcryptjs"),jwt=require("jsonwebtoken"),path=require("path");
+const {verifyResult}=require("./robokassa-result");
+const crypto=require("node:crypto");
+const app=express(),secret=process.env.JWT_SECRET;
+const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_SSL==="true"?{rejectUnauthorized:true}:undefined});
+app.disable("x-powered-by");
+app.use(cors({origin:process.env.FRONTEND_ORIGIN?process.env.FRONTEND_ORIGIN.split(",").map(x=>x.trim()):false}));
+app.use(express.json({limit:"12mb"}));
+app.use(express.urlencoded({extended:false,limit:"32kb"}));
+const error=(res,status,message)=>res.status(status).json({success:false,error:message});
+const emailOf=x=>typeof x==="string"?x.trim().toLowerCase():"";
+const validEmail=x=>x.length<=254&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x);
+const tokenFor=id=>jwt.sign({userId:id},secret,{algorithm:"HS256",expiresIn:"7d"});
+async function init(){
+ await pool.query("CREATE TABLE IF NOT EXISTS users(id BIGSERIAL PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,credits INTEGER NOT NULL DEFAULT 0,created_at TIMESTAMPTZ DEFAULT NOW())");
+ // Preserve all existing balances; zero applies only to future registrations.
+ await pool.query("ALTER TABLE users ALTER COLUMN credits SET DEFAULT 0");
+ await pool.query("CREATE TABLE IF NOT EXISTS generation_jobs(id UUID PRIMARY KEY,user_id BIGINT NOT NULL REFERENCES users(id),kind TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',created_at TIMESTAMPTZ DEFAULT NOW())");
+ await pool.query("CREATE TABLE IF NOT EXISTS payment_orders(id BIGSERIAL PRIMARY KEY,user_id BIGINT NOT NULL REFERENCES users(id),provider TEXT NOT NULL DEFAULT 'robokassa',amount_kopecks BIGINT NOT NULL CHECK(amount_kopecks>0),currency TEXT NOT NULL DEFAULT 'RUB',generations INTEGER NOT NULL CHECK(generations>0),status TEXT NOT NULL DEFAULT 'created',provider_invoice_id TEXT UNIQUE,created_at TIMESTAMPTZ DEFAULT NOW(),paid_at TIMESTAMPTZ)");
 }
-
-initDatabase().catch(error => {
-  console.error("Database initialization failed:", error);
-});
-
-// WEBSITE
-
-app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "index.html"));
-});
-
-// PUBLIC OFFER — serve the existing HTML document without exposing other files
-app.get("/oferta.html", (req, res) => {
-  res.sendFile(path.join(__dirname, "oferta.html"));
-});
-
-// HEALTH CHECK
-
-app.get("/api/health", (req, res) => {
-  res.json({
-    success: true,
-    service: "Velora AI",
-    status: "running"
-  });
-});
-
-// REGISTER
-
-app.post("/api/register", async (req, res) => {
-  try {
-    const { email, password } = req.body || {};
-
-    if (
-      typeof email !== "string" ||
-      typeof password !== "string" ||
-      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
-      password.length < 8 ||
-      password.length > 128
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: "Проверь email и пароль (минимум 8 символов)"
-      });
-    }
-
-    const normalizedEmail = email.trim().toLowerCase();
-
-    const existing = await pool.query(
-      "SELECT id FROM users WHERE email = $1",
-      [normalizedEmail]
-    );
-
-    if (existing.rows.length) {
-      return res.status(409).json({
-        success: false,
-        error: "Этот email уже зарегистрирован"
-      });
-    }
-
-    const passwordHash = await bcrypt.hash(password, 12);
-
-    const result = await pool.query(
-      `INSERT INTO users (email, password_hash)
-       VALUES ($1, $2)
-       RETURNING id, email, credits`,
-      [normalizedEmail, passwordHash]
-    );
-
-    const user = result.rows[0];
-
-    const token = jwt.sign(
-      { userId: user.id },
-      process.env.JWT_SECRET,
-      { expiresIn: "7d" }
-    );
-
-    res.status(201).json({
-      success: true,
-      token,
-      user
-    });
-
-  } catch (error) {
-    console.error("Register error:", error);
-
-    res.status(500).json({
-      success: false,
-      error: "Ошибка регистрации"
-    });
-  }
-});
-
-// LOGIN
-
-app.post("/api/login", async (req, res) => {
-  try {
-    const { email, password } = req.body || {};
-
-    if (
-      typeof email !== "string" ||
-      typeof password !== "string"
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: "Введите email и пароль"
-      });
-    }
-
-    const result = await pool.query(
-      "SELECT * FROM users WHERE email = $1",
-      [email.trim().toLowerCase()]
-    );
-
-    const user = result.rows[0];
-
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        error: "Неверный email или пароль"
-      });
-    }
-
-    const validPassword = await bcrypt.compare(
-      password,
-      user.password_hash
-    );
-
-    if (!validPassword) {
-      return res.status(401).json({
-        success: false,
-        error: "Неверный email или пароль"
-      });
-    }
-
-    const token = jwt.sign(
-      { userId: user.id },
-      process.env.JWT_SECRET,
-      { expiresIn: "7d" }
-    );
-
-    res.json({
-      success: true,
-      token,
-      user: {
-        id: user.id,
-        email: user.email,
-        credits: user.credits
-      }
-    });
-
-  } catch (error) {
-    console.error("Login error:", error);
-
-    res.status(500).json({
-      success: false,
-      error: "Ошибка входа"
-    });
-  }
-});
-
-// AUTH MIDDLEWARE
-
-function authenticate(req, res, next) {
-  const authorization = req.headers.authorization || "";
-
-  const token = authorization.startsWith("Bearer ")
-    ? authorization.slice(7)
-    : null;
-
-  if (!token) {
-    return res.status(401).json({
-      success: false,
-      error: "Необходим вход в аккаунт"
-    });
-  }
-
-  try {
-    const decoded = jwt.verify(
-      token,
-      process.env.JWT_SECRET
-    );
-
-    req.userId = decoded.userId;
-
-    next();
-
-  } catch (error) {
-    res.status(401).json({
-      success: false,
-      error: "Сессия истекла"
-    });
-  }
+function auth(req,res,next){
+ const token=/^Bearer (.+)$/.exec(req.get("authorization")||"")?.[1];
+ if(!token||!secret)return error(res,401,"Требуется вход");
+ try{req.userId=jwt.verify(token,secret,{algorithms:["HS256"]}).userId;next();}
+ catch{return error(res,401,"Сессия недействительна");}
 }
-
-// USER PROFILE
-
-app.get("/api/me", authenticate, async (req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT id, email, credits, created_at
-       FROM users
-       WHERE id = $1`,
-      [req.userId]
-    );
-
-    if (!result.rows.length) {
-      return res.status(404).json({
-        success: false,
-        error: "Пользователь не найден"
-      });
-    }
-
-    res.json({
-      success: true,
-      user: result.rows[0]
-    });
-
-  } catch (error) {
-    console.error("Profile error:", error);
-
-    res.status(500).json({
-      success: false,
-      error: "Ошибка загрузки профиля"
-    });
-  }
+app.get("/",(req,res)=>res.sendFile(path.join(__dirname,"index.html")));
+app.get("/oferta.html",(req,res)=>res.sendFile(path.join(__dirname,"oferta.html")));
+app.get("/api/health",(req,res)=>res.json({success:true,service:"Velora AI",status:"running"}));
+app.post("/api/register",async(req,res)=>{
+ try{
+ const email=emailOf(req.body?.email),password=req.body?.password;
+ if(!validEmail(email)||typeof password!=="string"||password.length<8||password.length>128)return error(res,400,"Проверьте email и пароль (8–128 символов)");
+ if(!secret)return error(res,503,"Регистрация временно недоступна");
+ const hash=await bcrypt.hash(password,12);
+ const r=await pool.query("INSERT INTO users(email,password_hash,credits) VALUES($1,$2,0) ON CONFLICT(email) DO NOTHING RETURNING id,email,credits",[email,hash]);
+ if(!r.rowCount)return error(res,409,"Email уже зарегистрирован");
+ return res.status(201).json({success:true,token:tokenFor(r.rows[0].id),user:r.rows[0]});
+ }catch(e){console.error("Register:",e.message);return error(res,500,"Ошибка регистрации");}
 });
-
-// AI PHOTO GENERATION
-// Only authenticated account requests are permitted.
-
-app.post("/api/generate", authenticate, async (req, res) => {
-  try {
-    const { image, prompt } = req.body || {};
-
-    if (
-      typeof image !== "string" ||
-      image.length > 11 * 1024 * 1024 ||
-      !(
-        image.startsWith("data:image/jpeg;base64,") ||
-        image.startsWith("data:image/png;base64,")
-      )
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: "Необходима фотография JPEG или PNG"
-      });
-    }
-
-    if (
-      typeof prompt !== "string" ||
-      !prompt.trim() ||
-      prompt.length > 1500
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: "Некорректное описание фотографии"
-      });
-    }
-
-    if (!process.env.REPLICATE_API_TOKEN) {
-      return res.status(503).json({ success: false, error: "Генерация временно недоступна" });
-    }
-
-    const debit = await pool.query(
-      "UPDATE users SET credits = credits - 1 WHERE id = $1 AND credits > 0 RETURNING credits",
-      [req.userId]
-    );
-    if (!debit.rows.length) {
-      return res.status(402).json({ success: false, error: "Бесплатные генерации закончились" });
-    }
-    let output;
-    try {
-      output = await replicate.run(
-      "black-forest-labs/flux-kontext-pro",
-      {
-        input: {
-          prompt: prompt.trim(),
-          input_image: image,
-          output_format: "jpg",
-          aspect_ratio: "match_input_image"
-        }
-      }
-    );
-
-    } catch (generationError) {
-      await pool.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [req.userId]);
-      return res.status(502).json({ success: false, error: "Generation failed; credit restored" });
-    }
-    const first = Array.isArray(output) ? output[0] : output;
-    const imageUrl =
-      typeof first === "string"
-        ? first
-        : typeof first?.url === "function"
-          ? String(first.url())
-          : null;
-
-    if (!imageUrl || !imageUrl.startsWith("https://")) {
-      await pool.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [req.userId]);
-      return res.status(502).json({ success: false, error: "No image returned; credit restored" });
-    }
-
-    res.json({
-      success: true,
-      image: imageUrl,
-      credits: debit.rows[0].credits
-    });
-
-  } catch (error) {
-    console.error("Generation error:", error);
-
-    res.status(500).json({
-      success: false,
-      error: "Ошибка генерации фотографии"
-    });
-  }
+app.post("/api/login",async(req,res)=>{
+ try{
+ const email=emailOf(req.body?.email),password=req.body?.password;
+ if(!validEmail(email)||typeof password!=="string")return error(res,400,"Введите email и пароль");
+ if(!secret)return error(res,503,"Вход временно недоступен");
+ const r=await pool.query("SELECT id,email,password_hash,credits FROM users WHERE email=$1",[email]);
+ const u=r.rows[0];
+ if(!u||!(await bcrypt.compare(password,u.password_hash)))return error(res,401,"Неверный email или пароль");
+ return res.json({success:true,token:tokenFor(u.id),user:{id:u.id,email:u.email,credits:u.credits}});
+ }catch(e){console.error("Login:",e.message);return error(res,500,"Ошибка входа");}
 });
-
-// START SERVER
-
-const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Velora AI running on port ${PORT}`);
+app.get("/api/me",auth,async(req,res)=>{
+ try{const r=await pool.query("SELECT id,email,credits,created_at FROM users WHERE id=$1",[req.userId]);if(!r.rowCount)return error(res,404,"Аккаунт не найден");return res.json({success:true,user:r.rows[0]});}
+ catch(e){console.error("Profile:",e.message);return error(res,500,"Ошибка профиля");}
 });
+// Paid mode: generation disabled until verified payments and provider API are configured.
+// Never trust client-reported payment status or balance.
+app.post("/api/generate",auth,(req,res)=>error(res,503,"Генерация ожидает подключения оплаты и провайдера"));
+app.post("/api/video",auth,(req,res)=>error(res,503,"Видео ожидает подключения провайдера"));
+const payConfig=()=>{
+ const count=Number(process.env.VELORA_PACK_GENERATIONS||"1");
+ const kopecks=Number(process.env.VELORA_PACK_PRICE_KOPECKS||"4900");
+ const algorithm=(process.env.ROBOKASSA_HASH||"md5").toLowerCase();
+ const configured=process.env.ROBOKASSA_READY==="true"&&!!process.env.ROBOKASSA_MERCHANT_LOGIN&&!!process.env.ROBOKASSA_PASSWORD1&&!!process.env.ROBOKASSA_PASSWORD2&&Number.isSafeInteger(count)&&count>0&&Number.isSafeInteger(kopecks)&&kopecks>0&&["md5","sha256","sha512"].includes(algorithm);
+ return {configured,count,kopecks,algorithm};
+};
+app.get("/api/pricing",(req,res)=>{
+ const p=payConfig();
+ res.json({success:true,available:p.configured,currency:"RUB",plans:p.configured?[{id:"standard",generations:p.count,amount_kopecks:p.kopecks}]:[],message:p.configured?"":"Оплата ожидает активации и настройки магазина"});
+});
+app.get("/api/payments/status",auth,(req,res)=>res.json({success:true,provider:"robokassa",enabled:payConfig().configured}));
+app.post("/api/payments/create",auth,async(req,res)=>{
+ const p=payConfig();
+ if(!p.configured)return error(res,503,"Оплата ещё не подключена");
+ if(req.body?.plan!=="standard")return error(res,400,"Неверный тариф");
+ try{
+  const order=await pool.query("INSERT INTO payment_orders(user_id,amount_kopecks,generations) VALUES($1,$2,$3) RETURNING id",[req.userId,p.kopecks,p.count]);
+  const invoice=String(order.rows[0].id),sum=(p.kopecks/100).toFixed(2);
+  const signature=crypto.createHash(p.algorithm).update([process.env.ROBOKASSA_MERCHANT_LOGIN,sum,invoice,process.env.ROBOKASSA_PASSWORD1].join(":"),"utf8").digest("hex");
+  const url=new URL("https://auth.robokassa.ru/Merchant/Index.aspx");
+  for(const [k,v] of Object.entries({MerchantLogin:process.env.ROBOKASSA_MERCHANT_LOGIN,OutSum:sum,InvId:invoice,Description:"Velora AI — пакет генераций",SignatureValue:signature,Culture:"ru"}))url.searchParams.set(k,v);
+  return res.json({success:true,invoiceId:invoice,paymentUrl:url.toString()});
+ }catch(e){console.error("Payment create:",e.message);return error(res,500,"Не удалось создать заказ");}
+});
+// Server-to-server callback; never accept browser redirect as payment proof.
+app.post("/api/payments/robokassa/result",async(req,res)=>{
+ const verified=verifyResult(req.body,process.env.ROBOKASSA_PASSWORD2,(process.env.ROBOKASSA_HASH||"md5").toLowerCase());
+ if(!verified)return res.sendStatus(403);
+ const client=await pool.connect();
+ try{
+  await client.query("BEGIN");
+  const r=await client.query("SELECT user_id,amount_kopecks,generations,status FROM payment_orders WHERE id=$1 FOR UPDATE",[verified.invoiceId]);
+  const order=r.rows[0];
+  if(!order||BigInt(order.amount_kopecks)!==verified.kopecks){await client.query("ROLLBACK");return res.sendStatus(400);}
+  if(order.status==="created"){
+   await client.query("UPDATE payment_orders SET status='paid',paid_at=NOW() WHERE id=$1",[verified.invoiceId]);
+   await client.query("UPDATE users SET credits=credits+$1 WHERE id=$2",[order.generations,order.user_id]);
+  }else if(order.status!=="paid"){await client.query("ROLLBACK");return res.sendStatus(409);}
+  await client.query("COMMIT");
+  return res.type("text/plain").send("OK"+verified.invoiceId);
+ }catch(e){await client.query("ROLLBACK").catch(()=>{});console.error("Payment callback:",e.message);return res.sendStatus(500);}
+ finally{client.release();}
+});
+(async()=>{if(!process.env.DATABASE_URL||!secret)throw Error("DATABASE_URL and JWT_SECRET required");await init();app.listen(process.env.PORT||3000,"0.0.0.0",()=>console.log("Velora AI server ready"));})().catch(e=>{console.error("Startup:",e.message);process.exit(1);});
