@@ -1,6 +1,5 @@
 const express = require("express");
 const cors = require("cors");
-const Replicate = require("replicate");
 const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
@@ -11,9 +10,6 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "15mb" }));
 
-const replicate = new Replicate({
-  auth: process.env.REPLICATE_API_TOKEN
-});
 
 // DATABASE
 
@@ -32,14 +28,14 @@ async function initDatabase() {
       id BIGSERIAL PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
-      credits INTEGER NOT NULL DEFAULT 2,
+      credits INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
 
     await pool.query(`
     ALTER TABLE users
-    ALTER COLUMN credits SET DEFAULT 2
+    ALTER COLUMN credits SET DEFAULT 0
   `);
 
   console.log("Velora AI database ready");
@@ -274,96 +270,17 @@ app.get("/api/me", authenticate, async (req, res) => {
 // AI PHOTO GENERATION
 // Only authenticated account requests are permitted.
 
-app.post("/api/generate", authenticate, async (req, res) => {
-  try {
-    const { image, prompt } = req.body || {};
-
-    if (
-      typeof image !== "string" ||
-      image.length > 11 * 1024 * 1024 ||
-      !(
-        image.startsWith("data:image/jpeg;base64,") ||
-        image.startsWith("data:image/png;base64,")
-      )
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: "Необходима фотография JPEG или PNG"
-      });
-    }
-
-    if (
-      typeof prompt !== "string" ||
-      !prompt.trim() ||
-      prompt.length > 1500
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: "Некорректное описание фотографии"
-      });
-    }
-
-    if (!process.env.REPLICATE_API_TOKEN) {
-      return res.status(503).json({ success: false, error: "Генерация временно недоступна" });
-    }
-
-    const debit = await pool.query(
-      "UPDATE users SET credits = credits - 1 WHERE id = $1 AND credits > 0 RETURNING credits",
-      [req.userId]
-    );
-    if (!debit.rows.length) {
-      return res.status(402).json({ success: false, error: "Бесплатные генерации закончились" });
-    }
-    let output;
-    try {
-      output = await replicate.run(
-      "black-forest-labs/flux-kontext-pro",
-      {
-        input: {
-          prompt: prompt.trim(),
-          input_image: image,
-          output_format: "jpg",
-          aspect_ratio: "match_input_image"
-        }
-      }
-    );
-
-    } catch (generationError) {
-      await pool.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [req.userId]);
-      return res.status(502).json({ success: false, error: "Generation failed; credit restored" });
-    }
-    const first = Array.isArray(output) ? output[0] : output;
-    const imageUrl =
-      typeof first === "string"
-        ? first
-        : typeof first?.url === "function"
-          ? String(first.url())
-          : null;
-
-    if (!imageUrl || !imageUrl.startsWith("https://")) {
-      await pool.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [req.userId]);
-      return res.status(502).json({ success: false, error: "No image returned; credit restored" });
-    }
-
-    res.json({
-      success: true,
-      image: imageUrl,
-      credits: debit.rows[0].credits
-    });
-
-  } catch (error) {
-    console.error("Generation error:", error);
-
-    res.status(500).json({
-      success: false,
-      error: "Ошибка генерации фотографии"
-    });
-  }
+// Paid-only safety gate: no free-credit generation on the production API.
+// Payment and Ranvik processing will be enabled only after verified integration.
+app.post("/api/generate", authenticate, (_req, res) => {
+  res.status(402).json({success:false,error:"Бесплатные генерации отключены. Платная генерация пока недоступна."});
 });
-
-// START SERVER
-
-const PORT = process.env.PORT || 3000;
+app.post("/api/edit", authenticate, (_req, res) => {
+  res.status(402).json({success:false,error:"Редактирование будет доступно после подключения оплаты."});
+});
+app.post("/api/video", authenticate, (_req, res) => {
+  res.status(402).json({success:false,error:"Генерация видео будет доступна после подключения оплаты."});
+});
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Velora AI running on port ${PORT}`);
