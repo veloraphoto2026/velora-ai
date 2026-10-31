@@ -268,6 +268,26 @@ app.get("/api/me", authenticate, async (req, res) => {
   }
 });
 
+// Durable order ledger: pending orders do not grant generation access.
+// This endpoint creates an unpaid order only. No payment URLs are issued yet.
+async function initOrders() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS orders (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id),
+      service TEXT NOT NULL CHECK (service IN ('photo','edit','video')),
+      amount_kopecks INTEGER NOT NULL CHECK (amount_kopecks > 0),
+      currency TEXT NOT NULL DEFAULT 'RUB' CHECK (currency = 'RUB'),
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','paid','processing','completed','failed','refunded')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      paid_at TIMESTAMPTZ,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query("CREATE INDEX IF NOT EXISTS orders_user_created_idx ON orders(user_id, created_at DESC)");
+}
+initOrders().catch(error => console.error("Order table initialization failed:", error));
+
 // Paid service catalog. All prices are in RUB; never trust client-supplied amounts.
 const SERVICES = Object.freeze({
   photo: { name: "Генерация фотографии", priceRub: 99 },
@@ -275,6 +295,35 @@ const SERVICES = Object.freeze({
   video: { name: "Генерация видео", priceRub: 299 }
 });
 app.get("/api/services", (_req, res) => res.json({success:true, currency:"RUB", services:SERVICES, paymentsEnabled:false, generationEnabled:false}));
+app.post("/api/orders", authenticate, async (req, res) => {
+  const service = req.body?.service;
+  if (typeof service !== "string" || !Object.prototype.hasOwnProperty.call(SERVICES, service)) {
+    return res.status(400).json({success:false, error:"Неизвестная услуга"});
+  }
+  try {
+    const order = await pool.query(
+      "INSERT INTO orders (user_id, service, amount_kopecks) VALUES ($1,$2,$3) RETURNING id, service, amount_kopecks, currency, status, created_at",
+      [req.userId, service, SERVICES[service].priceRub * 100]
+    );
+    return res.status(201).json({success:true, order:order.rows[0], paymentAvailable:false});
+  } catch (error) {
+    console.error("Order creation error:", error);
+    return res.status(503).json({success:false, error:"Создание заказа временно недоступно"});
+  }
+});
+app.get("/api/orders", authenticate, async (req, res) => {
+  try {
+    const orders = await pool.query(
+      "SELECT id, service, amount_kopecks, currency, status, created_at, paid_at FROM orders WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50",
+      [req.userId]
+    );
+    return res.json({success:true, orders:orders.rows});
+  } catch (error) {
+    console.error("Order list error:", error);
+    return res.status(503).json({success:false, error:"История заказов временно недоступна"});
+  }
+});
+
 
 // Fail closed until verified Robokassa payment and a durable order ledger are deployed.
 // Old complimentary credits are retained in the database for audit/compatibility,
