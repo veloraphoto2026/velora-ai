@@ -352,27 +352,41 @@ app.get("/api/orders/:id", authenticate, async (req, res) => {
 });
 
 // Robokassa ResultURL (legacy form callback). No browser redirect can mark an order paid.
-// Configure ROBOKASSA_PASSWORD2 and ROBOKASSA_HASH_ALGORITHM on the server.
+// Production callbacks use ROBOKASSA_PASSWORD2; test callbacks use ROBOKASSA_TEST_PASSWORD2.
+// Verified test notifications never mark an order paid or enable generation.
 // Payment initiation stays disabled until fiscal receipt settings are verified.
 app.post("/api/payments/robokassa/result", express.urlencoded({extended:false,limit:"16kb"}), async (req, res) => {
   const { OutSum, InvId, SignatureValue } = req.body || {};
-  const password = process.env.ROBOKASSA_PASSWORD2;
+  const productionPassword = process.env.ROBOKASSA_PASSWORD2;
+  const testPassword = process.env.ROBOKASSA_TEST_PASSWORD2;
   const algorithm = (process.env.ROBOKASSA_HASH_ALGORITHM || "").toLowerCase();
-  if (!password || !["md5","sha256","sha512"].includes(algorithm)) return res.sendStatus(503);
+  if ((!productionPassword && !testPassword) || !["md5","sha256","sha512"].includes(algorithm)) return res.sendStatus(503);
   if (typeof OutSum !== "string" || !/^\\d+\\.\\d{2}$/.test(OutSum) ||
       typeof InvId !== "string" || !/^[1-9]\\d*$/.test(InvId) ||
       typeof SignatureValue !== "string" || !/^[0-9a-fA-F]+$/.test(SignatureValue)) return res.sendStatus(400);
   // Reject optional Shp_* until the signed custom-parameter contract is implemented.
   if (Object.keys(req.body).some(k => /^shp_/i.test(k))) return res.sendStatus(400);
-  const expected = crypto.createHash(algorithm).update(`${OutSum}:${InvId}:${password}`, "utf8").digest();
   const supplied = Buffer.from(SignatureValue, "hex");
-  if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) return res.sendStatus(403);
+  const matches = (password) => {
+    if (!password) return false;
+    const expected = crypto.createHash(algorithm).update(`${OutSum}:${InvId}:${password}`, "utf8").digest();
+    return supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected);
+  };
+  const isProduction = matches(productionPassword);
+  const isTest = !isProduction && matches(testPassword);
+  if (!isProduction && !isTest) return res.sendStatus(403);
   const [rub, fraction] = OutSum.split(".");
   const amount = BigInt(rub) * 100n + BigInt((fraction + "000000").slice(0,6)) / 10000n;
   // Fractions of a kopeck cannot be reconciled.
   if (BigInt((fraction + "000000").slice(0,6)) % 10000n !== 0n || amount > 2147483647n) return res.sendStatus(400);
   try {
     if (!(await ordersReady)) return res.sendStatus(503);
+    if (isTest) {
+      const check = await pool.query("SELECT id, amount_kopecks, status FROM orders WHERE id=$1", [InvId]);
+      if (!check.rows.length || check.rows[0].amount_kopecks !== Number(amount)) return res.sendStatus(409);
+      console.info("Robokassa TEST notification verified for order", InvId);
+      return res.type("text/plain").send("OK" + InvId);
+    }
     const result = await pool.query(
       `UPDATE orders SET status='paid', paid_at=NOW(), updated_at=NOW()
        WHERE id=$1 AND amount_kopecks=$2 AND currency='RUB' AND status='pending'
