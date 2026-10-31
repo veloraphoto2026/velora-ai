@@ -286,7 +286,7 @@ async function initOrders() {
   `);
   await pool.query("CREATE INDEX IF NOT EXISTS orders_user_created_idx ON orders(user_id, created_at DESC)");
 }
-initOrders().catch(error => console.error("Order table initialization failed:", error));
+const ordersReady = initOrders().then(() => true).catch(error => { console.error("Order table initialization failed:", error); return false; });
 
 // Paid service catalog. All prices are in RUB; never trust client-supplied amounts.
 const SERVICES = Object.freeze({
@@ -301,6 +301,7 @@ app.post("/api/orders", authenticate, async (req, res) => {
     return res.status(400).json({success:false, error:"Неизвестная услуга"});
   }
   try {
+    if (!(await ordersReady)) return res.status(503).json({success:false, error:"Система заказов временно недоступна"});
     const order = await pool.query(
       "INSERT INTO orders (user_id, service, amount_kopecks) VALUES ($1,$2,$3) RETURNING id, service, amount_kopecks, currency, status, created_at",
       [req.userId, service, SERVICES[service].priceRub * 100]
@@ -313,6 +314,7 @@ app.post("/api/orders", authenticate, async (req, res) => {
 });
 app.get("/api/orders", authenticate, async (req, res) => {
   try {
+    if (!(await ordersReady)) return res.status(503).json({success:false, error:"Система заказов временно недоступна"});
     const orders = await pool.query(
       "SELECT id, service, amount_kopecks, currency, status, created_at, paid_at FROM orders WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50",
       [req.userId]
@@ -324,6 +326,25 @@ app.get("/api/orders", authenticate, async (req, res) => {
   }
 });
 
+
+// Individual order lookup is always scoped to the authenticated owner.
+app.get("/api/orders/:id", authenticate, async (req, res) => {
+  if (!/^[1-9][0-9]*$/.test(req.params.id)) {
+    return res.status(400).json({success:false, error:"Некорректный номер заказа"});
+  }
+  try {
+    if (!(await ordersReady)) return res.status(503).json({success:false, error:"Система заказов временно недоступна"});
+    const result = await pool.query(
+      "SELECT id, service, amount_kopecks, currency, status, created_at, paid_at FROM orders WHERE id=$1 AND user_id=$2",
+      [req.params.id, req.userId]
+    );
+    if (!result.rows.length) return res.status(404).json({success:false, error:"Заказ не найден"});
+    return res.json({success:true, order:result.rows[0]});
+  } catch (error) {
+    console.error("Order lookup error:", error);
+    return res.status(503).json({success:false, error:"Заказ временно недоступен"});
+  }
+});
 
 // Fail closed until verified Robokassa payment and a durable order ledger are deployed.
 // Old complimentary credits are retained in the database for audit/compatibility,
