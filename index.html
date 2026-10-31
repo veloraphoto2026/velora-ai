@@ -27,14 +27,14 @@ footer{text-align:center;padding:30px;color:#999;font-size:13px}
 <section id="accountPanel" class="panel hidden"><h2>Личный кабинет</h2><p id="accountEmail" class="muted"></p>
 <p>Баланс генераций: <span id="credits" class="badge">—</span></p><button id="refreshBalance" class="secondary" type="button">Обновить баланс</button><p id="balanceStatus" class="status" role="status" aria-live="polite"></p><p class="note">Новые аккаунты не получают бесплатных генераций. Платная генерация станет доступна после подключения оплаты. Баланс определяется сервером.</p>
 <button id="logout" class="secondary" type="button">Выйти</button></section>
-<section id="studioPanel" class="panel hidden"><h2>ИИ-фотостудия</h2>
-<label for="photo">📸 Загрузи фотографию</label><input type="file" id="photo" accept="image/jpeg,image/png">
+<section id="studioPanel" class="panel hidden"><h2>Создание изображения по описанию</h2><p class="note">На первом этапе создаём изображение по тексту. Редактирование селфи появится после проверки Ranvik.</p>
+<div class="hidden"><label for="photo">📸 Загрузи фотографию</label><input type="file" id="photo" accept="image/jpeg,image/png"></div>
 <img id="preview" class="preview" alt="Исходная фотография">
-<label for="mode">✨ Выбери режим</label><select id="mode"><option value="real">Реалистичная фотосессия</option><option value="cartoon">Мультяшная обработка</option></select>
+<label for="mode">✨ Выбери режим</label><select id="mode"><option value="real">Реалистичное изображение</option><option value="cartoon">Иллюстрация</option></select>
 <label for="style">🎨 Выбери стиль</label><select id="style"></select>
 <label for="prompt">📝 Твои пожелания</label><textarea id="prompt" placeholder="Например: вечернее платье, Париж, мягкий свет"></textarea>
-<button id="generate" type="button" disabled aria-disabled="true">✨ Создание фото пока недоступно</button>
-<p class="note">Обработка загруженных фотографий ещё не подключена к Ranvik. Кнопка генерации отключена, чтобы исключить случайное списание.</p>
+<button id="generate" type="button" disabled>✨ Создать изображение — 99 ₽</button>
+<p class="note">Кнопка доступна только при активной генерации Ranvik и наличии оплаченного баланса. Обработка загруженных фотографий пока недоступна.</p>
 <div id="status" class="status" role="status" aria-live="polite"></div></section>
 <section id="paymentPanel" class="panel hidden"><h2>Стоимость услуг</h2><p>📸 Генерация фото — 99 ₽</p><p>✨ Редактирование фото — 149 ₽ (скоро)</p><p>🎬 Генерация видео — 299 ₽ (скоро)</p><h3>Оплата генерации фото</h3><p id="priceInfo" class="note">Проверяем доступность оплаты…</p><button id="payButton" type="button" disabled>Купить генерации</button><p id="payStatus" class="status" role="status"></p></section>
 <section id="resultPanel" class="panel hidden"><h2>Результат</h2><img id="result" class="preview" alt="Результат генерации"><button id="download" type="button" class="hidden">📥 Сохранить фотографию</button></section>
@@ -49,7 +49,11 @@ let registering=false,previewUrl=null,latestImage="";
 const styles={real:["Деловая фотосессия","Fashion","Путешествия","Романтика","Кинопортрет","Luxury"],cartoon:["3D-анимация","Аниме","Мультяшный 3D-портрет","Рисованная иллюстрация","Сказочный персонаж","Романтический мультфильм"]};
 function updateStyles(){ $("style").replaceChildren(...styles[$("mode").value].map(s=>new Option(s,s))) }
 $("mode").addEventListener("change",updateStyles);updateStyles();
-function showAccount(on){$("authPanel").classList.toggle("hidden",on);["accountPanel","studioPanel","paymentPanel","resultPanel","historyPanel"].forEach(id=>$(id).classList.toggle("hidden",!on));$("accountEmail").textContent=currentEmail;if(on){renderHistory();loadPricing()}}
+async function updateGenerationAvailability(){
+ const btn=$("generate");btn.disabled=true;
+ try{const p=await api("/api/providers");btn.disabled=!(p.ranvik?.image&&Number($("credits").textContent)>0)}catch{}
+}
+function showAccount(on){$("authPanel").classList.toggle("hidden",on);["accountPanel","studioPanel","paymentPanel","resultPanel","historyPanel"].forEach(id=>$(id).classList.toggle("hidden",!on));$("accountEmail").textContent=currentEmail;if(on){renderHistory();loadPricing();updateGenerationAvailability()}}
 async function loadPricing(){
  const btn=$("payButton");btn.disabled=true;
  try{const data=await api("/api/pricing");
@@ -85,6 +89,7 @@ async function refreshBalance(){
   const data=await api("/api/me",{headers:{"Authorization":"Bearer "+token}});
   if(!data.user||!Number.isSafeInteger(data.user.credits)||data.user.credits<0)throw new Error("Не удалось получить баланс");
   $("credits").textContent=data.user.credits;
+  await updateGenerationAvailability();
   $("balanceStatus").textContent="Баланс обновлён";
  }catch(e){$("balanceStatus").textContent=e.message}
  finally{btn.disabled=false}
@@ -101,15 +106,13 @@ $("logout").onclick=()=>{token="";currentEmail="";sessionStorage.removeItem("vel
 $("photo").onchange=()=>{if(previewUrl)URL.revokeObjectURL(previewUrl);$("preview").style.display="none";const f=$("photo").files[0];if(!f)return;if(!["image/jpeg","image/png"].includes(f.type)||f.size>8*1024*1024){$("status").textContent="Нужен JPEG/PNG не больше 8 МБ";$("photo").value="";return}previewUrl=URL.createObjectURL(f);$("preview").src=previewUrl;$("preview").style.display="block";$("status").textContent="Фото загружено"};
 function renderHistory(){const el=$("history");el.replaceChildren();let items=[];try{items=JSON.parse(localStorage.getItem("velora_history_"+currentEmail)||"[]")}catch{};items.forEach(url=>{const a=document.createElement("a");a.href=url;a.target="_blank";a.rel="noopener noreferrer";const img=document.createElement("img");img.src=url;img.alt="Ранее созданное изображение";a.appendChild(img);el.appendChild(a)})}
 $("generate").onclick=async()=>{
-const f=$("photo").files[0];if(!f){$("status").textContent="Загрузи фотографию";return}
-const btn=$("generate");btn.disabled=true;$("status").textContent="Генерируем фото...";
+const btn=$("generate");btn.disabled=true;$("status").textContent="Создаём изображение...";
 try{
-const image=await new Promise((ok,fail)=>{const r=new FileReader();r.onload=()=>ok(r.result);r.onerror=fail;r.readAsDataURL(f)});
-const prompt=[$("mode").value==="cartoon"?"Мультяшная обработка":"Реалистичная фотосессия",$("style").value,$("prompt").value].filter(Boolean).join(". ");
-const data=await api("/api/generate",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+token},body:JSON.stringify({image,prompt})});
+const prompt=[$("mode").value==="cartoon"?"Иллюстрация":"Фотореалистичное изображение",$("style").value,$("prompt").value].filter(Boolean).join(". ");
+const data=await api("/api/generate",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+token},body:JSON.stringify({prompt})});
 latestImage=data.image;$("result").src=latestImage;$("result").style.display="block";$("resultPanel").classList.remove("hidden");$("download").classList.remove("hidden");$("credits").textContent=data.credits;$("status").textContent="Готово!";
 }catch(e){$("status").textContent=e.message;try{const me=await api("/api/me",{headers:{"Authorization":"Bearer "+token}});$("credits").textContent=me.user.credits}catch{}}
-finally{btn.disabled=false}
+finally{await updateGenerationAvailability()}
 };
 $("download").onclick=()=>{if(!latestImage)return;window.open(latestImage,"_blank","noopener,noreferrer")};
 if(token&&currentEmail){api("/api/me",{headers:{"Authorization":"Bearer "+token}}).then(data=>{currentEmail=data.user.email;sessionStorage.setItem("velora_email",currentEmail);$("credits").textContent=data.user.credits;showAccount(true)}).catch(()=>{$("logout").click()})}else{showAccount(false)}
