@@ -1,6 +1,5 @@
 const express = require("express");
 const cors = require("cors");
-const Replicate = require("replicate");
 const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
@@ -77,7 +76,7 @@ app.post("/api/register", async (req, res) => {
     if (
       typeof email !== "string" ||
       typeof password !== "string" ||
-      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) ||
       password.length < 8 ||
       password.length > 128
     ) {
