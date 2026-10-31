@@ -282,6 +282,8 @@ app.post("/api/video", authenticate, (_req, res) => {
   res.status(402).json({success:false,error:"Генерация видео будет доступна после подключения оплаты."});
 });
 
+const PORT = Number(process.env.PORT) || 3000;
+
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Velora AI running on port ${PORT}`);
 });
