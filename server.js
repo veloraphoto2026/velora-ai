@@ -32,14 +32,14 @@ async function initDatabase() {
       id BIGSERIAL PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
-      credits INTEGER NOT NULL DEFAULT 2,
+      credits INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
 
     await pool.query(`
     ALTER TABLE users
-    ALTER COLUMN credits SET DEFAULT 2
+    ALTER COLUMN credits SET DEFAULT 0
   `);
 
   console.log("Velora AI database ready");
@@ -276,6 +276,10 @@ app.get("/api/me", authenticate, async (req, res) => {
 
 app.post("/api/generate", authenticate, async (req, res) => {
   try {
+    // Paid checkout and verified order fulfillment are not yet connected.
+    // Block generation to prevent bypassing payment or consuming legacy credits.
+    return res.status(503).json({ success: false, error: "Генерация временно недоступна: подключается безопасная оплата." });
+
     const { image, prompt } = req.body || {};
 
     if (
