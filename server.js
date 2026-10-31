@@ -440,6 +440,65 @@ app.post("/api/payments/robokassa/result", express.urlencoded({extended:false,li
   }
 });
 
+// Ranvik paid image generation. The server never exposes the provider API key.
+// Orders must be verified paid before any chargeable provider request.
+app.post("/api/orders/:id/generate-photo", authenticate, async (req, res) => {
+  if (!/^[1-9][0-9]*$/.test(req.params.id)) return res.status(400).json({success:false,error:"Некорректный заказ"});
+  const prompt = req.body?.prompt;
+  if (typeof prompt !== "string" || prompt.trim().length < 5 || prompt.length > 2000) {
+    return res.status(400).json({success:false,error:"Опишите фотографию (5–2000 символов)"});
+  }
+  const key = process.env.RANVIK_API_KEY;
+  if (!key) return res.status(503).json({success:false,error:"Ranvik ещё не настроен"});
+  try {
+    if (!(await ordersReady)) return res.status(503).json({success:false,error:"Заказы недоступны"});
+    // Atomic claim prevents parallel/repeated calls charging for the same order.
+    const claimed = await pool.query(
+      `UPDATE orders SET status='processing', updated_at=NOW()
+       WHERE id=$1 AND user_id=$2 AND service='photo' AND status='paid'
+       RETURNING id`,
+      [req.params.id, req.userId]
+    );
+    if (!claimed.rowCount) return res.status(409).json({success:false,error:"Нужен оплаченный заказ на генерацию фото"});
+    let response;
+    try {
+      response = await fetch("https://api.ranvik.ru/v1/images/generations", {
+        method:"POST",
+        headers:{"Authorization":"Bearer "+key,"Content-Type":"application/json"},
+        body:JSON.stringify({
+          model:"krea-2-turbo",positivePrompt:prompt.trim(),
+          width:832,height:1248,numberResults:1,deliveryMethod:"sync"
+        }),
+        signal:AbortSignal.timeout(120000)
+      });
+    } catch (err) {
+      // Network timeout may happen after the provider accepted a charge.
+      // Keep the order in processing for manual reconciliation, never retry automatically.
+      console.error("Ranvik network failure for order",req.params.id,err?.name);
+      return res.status(502).json({success:false,error:"Не удалось получить ответ нейросети. Повторная отправка заблокирована до проверки."});
+    }
+    if (!response.ok) {
+      console.error("Ranvik rejected request for order",req.params.id,"HTTP",response.status);
+      // Provider may have charged even if it returned an error; do not auto-retry.
+      return res.status(502).json({success:false,error:"Ranvik вернул ошибку. Заказ отправлен на проверку."});
+    }
+    const payload = await response.json().catch(()=>null);
+    const item = payload?.data?.[0] || payload?.images?.[0] || payload?.output?.[0];
+    const image = typeof item === "string" ? item :
+      item?.url || item?.b64_json && ("data:image/png;base64,"+item.b64_json) ||
+      payload?.image || payload?.imageUrl;
+    if (typeof image !== "string" || !(image.startsWith("https://") || image.startsWith("data:image/"))) {
+      console.error("Unexpected Ranvik response shape for order",req.params.id);
+      return res.status(502).json({success:false,error:"Нестандартный ответ Ranvik. Заказ отправлен на проверку."});
+    }
+    await pool.query("UPDATE orders SET status='completed', updated_at=NOW() WHERE id=$1 AND status='processing'",[req.params.id]);
+    return res.json({success:true,orderId:req.params.id,image});
+  } catch (err) {
+    console.error("Paid image generation error:",err?.message);
+    return res.status(503).json({success:false,error:"Ошибка генерации. Обратитесь в поддержку с номером заказа."});
+  }
+});
+
 // AI PHOTO GENERATION
 // Only authenticated account requests are permitted.
 
