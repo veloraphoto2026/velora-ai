@@ -11,9 +11,7 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "15mb" }));
 
-const replicate = new Replicate({
-  auth: process.env.REPLICATE_API_TOKEN
-});
+// Legacy provider is intentionally disabled until paid-order authorization is implemented.
 
 // DATABASE
 
@@ -32,14 +30,14 @@ async function initDatabase() {
       id BIGSERIAL PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
-      credits INTEGER NOT NULL DEFAULT 2,
+      credits INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
 
     await pool.query(`
     ALTER TABLE users
-    ALTER COLUMN credits SET DEFAULT 2
+    ALTER COLUMN credits SET DEFAULT 0
   `);
 
   console.log("Velora AI database ready");
@@ -271,95 +269,24 @@ app.get("/api/me", authenticate, async (req, res) => {
   }
 });
 
-// AI PHOTO GENERATION
-// Only authenticated account requests are permitted.
-
-app.post("/api/generate", authenticate, async (req, res) => {
-  try {
-    const { image, prompt } = req.body || {};
-
-    if (
-      typeof image !== "string" ||
-      image.length > 11 * 1024 * 1024 ||
-      !(
-        image.startsWith("data:image/jpeg;base64,") ||
-        image.startsWith("data:image/png;base64,")
-      )
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: "Необходима фотография JPEG или PNG"
-      });
-    }
-
-    if (
-      typeof prompt !== "string" ||
-      !prompt.trim() ||
-      prompt.length > 1500
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: "Некорректное описание фотографии"
-      });
-    }
-
-    if (!process.env.REPLICATE_API_TOKEN) {
-      return res.status(503).json({ success: false, error: "Генерация временно недоступна" });
-    }
-
-    const debit = await pool.query(
-      "UPDATE users SET credits = credits - 1 WHERE id = $1 AND credits > 0 RETURNING credits",
-      [req.userId]
-    );
-    if (!debit.rows.length) {
-      return res.status(402).json({ success: false, error: "Бесплатные генерации закончились" });
-    }
-    let output;
-    try {
-      output = await replicate.run(
-      "black-forest-labs/flux-kontext-pro",
-      {
-        input: {
-          prompt: prompt.trim(),
-          input_image: image,
-          output_format: "jpg",
-          aspect_ratio: "match_input_image"
-        }
-      }
-    );
-
-    } catch (generationError) {
-      await pool.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [req.userId]);
-      return res.status(502).json({ success: false, error: "Generation failed; credit restored" });
-    }
-    const first = Array.isArray(output) ? output[0] : output;
-    const imageUrl =
-      typeof first === "string"
-        ? first
-        : typeof first?.url === "function"
-          ? String(first.url())
-          : null;
-
-    if (!imageUrl || !imageUrl.startsWith("https://")) {
-      await pool.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [req.userId]);
-      return res.status(502).json({ success: false, error: "No image returned; credit restored" });
-    }
-
-    res.json({
-      success: true,
-      image: imageUrl,
-      credits: debit.rows[0].credits
-    });
-
-  } catch (error) {
-    console.error("Generation error:", error);
-
-    res.status(500).json({
-      success: false,
-      error: "Ошибка генерации фотографии"
-    });
-  }
+// Paid service catalog. All prices are in RUB; never trust client-supplied amounts.
+const SERVICES = Object.freeze({
+  photo: { name: "Генерация фотографии", priceRub: 99 },
+  edit: { name: "Редактирование фотографии", priceRub: 149 },
+  video: { name: "Генерация видео", priceRub: 299 }
 });
+app.get("/api/services", (_req, res) => res.json({success:true, currency:"RUB", services:SERVICES, paymentsEnabled:false, generationEnabled:false}));
+
+// Fail closed until verified Robokassa payment and a durable order ledger are deployed.
+// Old complimentary credits are retained in the database for audit/compatibility,
+// but can no longer authorize generation.
+const paymentRequired = (_req, res) => res.status(402).json({
+  success:false,
+  error:"Генерация временно недоступна. Оплата и подтверждение заказов ещё подключаются."
+});
+app.post("/api/generate", authenticate, paymentRequired);
+app.post("/api/edit", authenticate, paymentRequired);
+app.post("/api/video", authenticate, paymentRequired);
 
 // START SERVER
 
