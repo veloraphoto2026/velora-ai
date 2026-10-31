@@ -529,7 +529,13 @@ app.post("/api/admin/ranvik-test", authenticate, async (req, res) => {
     });
     if (!response.ok) {
       console.error("Ranvik admin test HTTP status",response.status);
-      return res.status(502).json({success:false,error:"Ranvik вернул HTTP "+response.status});
+      // A confirmed payment-required response means no image was generated.
+      // Permit one fresh attempt after the balance has been topped up.
+      if (response.status === 402) {
+        app.locals.ranvikTestAttempted = false;
+        return res.status(402).json({success:false,error:"Недостаточно средств на балансе Ranvik. Пополните баланс и повторите тест."});
+      }
+      return res.status(502).json({success:false,error:"Ranvik вернул HTTP "+response.status+"; повторная попытка требует проверки"});
     }
     const payload = await response.json().catch(()=>null);
     const item = payload?.data?.[0] || payload?.images?.[0] || payload?.output?.[0] || payload?.data?.images?.[0] || payload?.result?.images?.[0];
