@@ -34,8 +34,10 @@ footer{text-align:center;padding:30px;color:#999;font-size:13px}
 <label for="mode">✨ Выбери режим</label><select id="mode"><option value="real">Реалистичная фотосессия</option><option value="cartoon">Мультяшная обработка</option></select>
 <label for="style">🎨 Выбери стиль</label><select id="style"></select>
 <label for="prompt">📝 Твои пожелания</label><textarea id="prompt" placeholder="Например: вечернее платье, Париж, мягкий свет"></textarea>
-<button id="generate" type="button" disabled>✨ Генерация скоро откроется</button>
-<p class="note">Оплата и генерация временно недоступны до завершения подключения Ranvik и Robokassa.</p>
+<button id="preparePortrait" type="button">✨ Подготовить фотосессию</button>
+<div id="portraitSummary" class="status" role="status" aria-live="polite"></div>
+<button id="generate" type="button" disabled>🔒 Создать портрет — 99 ₽ (скоро)</button>
+<p class="note">Подготовка фотосессии бесплатна и не отправляет фото в нейросеть. Генерация станет доступна только после проверки оплаты и обработки селфи через Ranvik.</p>
 <div id="status" class="status" role="status" aria-live="polite"></div></section>
 <section id="resultPanel" class="panel hidden"><h2>Результат</h2><img id="result" class="preview" alt="Результат генерации"><button id="download" type="button" class="hidden">📥 Сохранить фотографию</button></section>
 <section id="historyPanel" class="panel hidden"><h2>История на этом устройстве</h2><p class="note">Сохраняются только ссылки на последние изображения в этом браузере. Это не облачная история аккаунта.</p><div id="history" class="history"></div></section>
@@ -75,6 +77,14 @@ $("ranvikTestButton").onclick=async()=>{
 };
 $("logout").onclick=()=>{token="";currentEmail="";sessionStorage.removeItem("velora_token");sessionStorage.removeItem("velora_email");$("credits").textContent="—";showAccount(false)};
 $("photo").onchange=()=>{if(previewUrl)URL.revokeObjectURL(previewUrl);$("preview").style.display="none";const f=$("photo").files[0];if(!f)return;if(!["image/jpeg","image/png"].includes(f.type)||f.size>8*1024*1024){$("status").textContent="Нужен JPEG/PNG не больше 8 МБ";$("photo").value="";return}previewUrl=URL.createObjectURL(f);$("preview").src=previewUrl;$("preview").style.display="block";$("status").textContent="Фото загружено"};
+$("preparePortrait").onclick=()=>{
+  const f=$("photo").files[0];
+  if(!f){$("portraitSummary").textContent="Сначала загрузи своё селфи в формате JPEG или PNG.";return}
+  const mode=$("mode").value==="cartoon"?"Мультяшный портрет":"Реалистичный портрет";
+  const style=$("style").value;
+  const wishes=$("prompt").value.trim();
+  $("portraitSummary").textContent="Фотосессия подготовлена: "+mode+" · "+style+(wishes?" · "+wishes:"")+". Фото остаётся на устройстве. Для создания изображения потребуется оплата 99 ₽ после открытия сервиса.";
+};
 function renderHistory(){const el=$("history");el.replaceChildren();let items=[];try{items=JSON.parse(localStorage.getItem("velora_history_"+currentEmail)||"[]")}catch{};items.forEach(url=>{const a=document.createElement("a");a.href=url;a.target="_blank";a.rel="noopener noreferrer";const img=document.createElement("img");img.src=url;img.alt="Ранее созданное изображение";a.appendChild(img);el.appendChild(a)})}
 $("generate").onclick=async()=>{
 const f=$("photo").files[0];if(!f){$("status").textContent="Загрузи фотографию";return}
