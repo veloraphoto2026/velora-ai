@@ -36,7 +36,7 @@ footer{text-align:center;padding:30px;color:#999;font-size:13px}
 <label for="prompt">📝 Твои пожелания</label><textarea id="prompt" placeholder="Например: вечернее платье, Париж, мягкий свет"></textarea>
 <button id="preparePortrait" type="button">✨ Подготовить фотосессию</button>
 <div id="portraitSummary" class="status" role="status" aria-live="polite"></div>
-<button id="generate" type="button" disabled>🔒 Создать портрет — 99 ₽ (скоро)</button>
+<button id="orderPhoto" type="button" class="secondary">🧾 Создать заказ на фото — 99 ₽ (без оплаты)</button><button id="generate" type="button" disabled>🔒 Создать портрет — 99 ₽ (скоро)</button>
 <p class="note">Подготовка фотосессии бесплатна и не отправляет фото в нейросеть. Генерация станет доступна только после проверки оплаты и обработки селфи через Ranvik.</p>
 <div id="status" class="status" role="status" aria-live="polite"></div></section>
 <section id="videoStudioPanel" class="panel hidden"><h2>🎬 Видео и оживление фото</h2>
@@ -46,7 +46,7 @@ footer{text-align:center;padding:30px;color:#999;font-size:13px}
 <label for="videoPrompt">🎥 Как должно двигаться изображение</label><textarea id="videoPrompt" maxlength="1000" placeholder="Например: девушка плавно поворачивает голову, моргает и мягко улыбается. Камера медленно приближается. Внешность не менять."></textarea>
 <label for="videoRatio">📐 Формат</label><select id="videoRatio"><option value="9:16">9:16 — сторис и Reels</option><option value="16:9">16:9 — горизонтальное видео</option></select>
 <button id="prepareVideo" type="button">✨ Подготовить видео</button><div id="videoStatus" class="status" role="status" aria-live="polite"></div>
-<button type="button" disabled>🔒 Создать видео — 299 ₽ (скоро)</button>
+<button id="orderVideo" type="button" class="secondary">🧾 Создать заказ на видео — 299 ₽ (без оплаты)</button><button type="button" disabled>🔒 Создать видео — 299 ₽ (скоро)</button>
 <p class="note">Подготовка не отправляет фото в Ranvik и не расходует баланс. Генерация откроется после проверки видео API и оплаты.</p></section>
 <section id="audioStudioPanel" class="panel hidden"><h2>🎵 Звук и песни</h2>
 <p class="muted">Подготовь озвучку, музыку или песню для ролика, рекламы и личного проекта.</p>
@@ -58,7 +58,7 @@ footer{text-align:center;padding:30px;color:#999;font-size:13px}
 <button id="prepareAudio" type="button">✨ Подготовить звук</button><div id="audioStatus" class="status" role="status" aria-live="polite"></div>
 <button type="button" disabled>🔒 Создать аудио (скоро)</button>
 <p class="note">Пока доступна только подготовка задания. Генерация аудио не подключена и не расходует баланс. Цена будет установлена после проверки стоимости провайдера.</p></section>
-<section id="resultPanel" class="panel hidden"><h2>Результат</h2><img id="result" class="preview" alt="Результат генерации"><button id="download" type="button" class="hidden">📥 Сохранить фотографию</button></section>
+<section id="ordersPanel" class="panel hidden"><h2>🧾 Мои заказы</h2><p class="note">Заказ не является оплатой. Оплата откроется после активации Robokassa.</p><div id="orderList" class="note"></div><button id="refreshOrders" type="button" class="secondary">Обновить заказы</button></section><section id="resultPanel" class="panel hidden"><h2>Результат</h2><img id="result" class="preview" alt="Результат генерации"><button id="download" type="button" class="hidden">📥 Сохранить фотографию</button></section>
 <section id="historyPanel" class="panel hidden"><h2>История на этом устройстве</h2><p class="note">Сохраняются только ссылки на последние изображения в этом браузере. Это не облачная история аккаунта.</p><div id="history" class="history"></div></section>
 </main><footer>© 2026 VELORA AI · Бета-версия<br><a href="/oferta.html" style="display:inline-block;margin-top:12px;color:#d9b76e;text-decoration:underline">Публичная оферта</a></footer>
 <script>
@@ -70,7 +70,7 @@ let registering=false,previewUrl=null,latestImage="";
 const styles={real:["Деловая фотосессия","Fashion","Путешествия","Романтика","Кинопортрет","Luxury"],cartoon:["3D-анимация","Аниме","Мультяшный 3D-портрет","Рисованная иллюстрация","Сказочный персонаж","Романтический мультфильм"]};
 function updateStyles(){ $("style").replaceChildren(...styles[$("mode").value].map(s=>new Option(s,s))) }
 $("mode").addEventListener("change",updateStyles);updateStyles();
-function showAccount(on){$("authPanel").classList.toggle("hidden",on);["accountPanel","studioPanel","videoStudioPanel","audioStudioPanel","resultPanel","historyPanel"].forEach(id=>$(id).classList.toggle("hidden",!on));$("accountEmail").textContent=currentEmail;if(on)renderHistory()}
+function showAccount(on){$("authPanel").classList.toggle("hidden",on);["accountPanel","studioPanel","videoStudioPanel","audioStudioPanel","ordersPanel","resultPanel","historyPanel"].forEach(id=>$(id).classList.toggle("hidden",!on));$("accountEmail").textContent=currentEmail;if(on){renderHistory();loadOrders()}}
 function setAuthMode(){ $("authTitle").textContent=registering?"Регистрация":"Вход в Velora AI";$("authSubmit").textContent=registering?"Зарегистрироваться":"Войти";$("authToggle").textContent=registering?"У меня уже есть аккаунт":"Создать аккаунт";$("authStatus").textContent="" }
 $("authToggle").onclick=()=>{registering=!registering;setAuthMode()};
 async function api(path,options={}){const r=await fetch(API+path,options);const body=await r.json().catch(()=>({}));if(!r.ok)throw new Error(body.error||body.message||"Ошибка сервера ("+r.status+")");return body}
@@ -110,6 +110,24 @@ $("prepareVideo").onclick=()=>{const mode=$("videoMode").value;if(mode==="animat
 function updateAudioMode(){const mode=$("audioMode").value;$("audioVoiceFields").classList.toggle("hidden",mode==="music");$("audioTextLabel").textContent=mode==="voice"?"📝 Текст для озвучки":mode==="song"?"✍️ Текст песни (куплет и припев)":"🎼 Описание композиции";$("audioText").placeholder=mode==="voice"?"Введи текст, который нужно озвучить":mode==="song"?"Напиши слова песни, раздели на куплет и припев":"Например: нежное фортепиано, мягкие струнные, без вокала";$("prepareAudio").textContent=mode==="song"?"✨ Подготовить песню":mode==="music"?"✨ Подготовить музыку":"✨ Подготовить озвучку";$("audioStatus").textContent=""}
 $("audioMode").onchange=updateAudioMode;updateAudioMode();
 $("prepareAudio").onclick=()=>{const mode=$("audioMode").value;const t=$("audioText").value.trim();if(t.length<5){$("audioStatus").textContent="Добавь текст или описание (не менее 5 символов).";return}const name=mode==="song"?"Песня":mode==="music"?"Музыка":"Озвучка";$("audioStatus").textContent=name+" подготовлена: "+$("audioDuration").value+" сек. · "+($("audioStyle").value.trim()||"стиль не указан")+(mode!=="music"?" · "+$("audioVoice").selectedOptions[0].text:"")+". Создание аудио откроется после подключения нейросети и оплаты."};
+async function createPendingOrder(service,statusId){
+  const el=$(statusId);el.textContent="Создаём заказ без списания денег...";
+  try{
+    const data=await api("/api/orders",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+token},body:JSON.stringify({service})});
+    el.textContent="Заказ №"+data.order.id+" создан. Оплата пока не открыта — деньги не списаны. Заказ сохранён в личном кабинете.";
+    await loadOrders();
+  }catch(e){el.textContent="Не удалось создать заказ: "+e.message}
+}
+async function loadOrders(){
+  try{const data=await api("/api/orders",{headers:{"Authorization":"Bearer "+token}});
+    const root=$("orderList");root.replaceChildren();
+    if(!data.orders.length){root.textContent="Пока нет заказов.";return}
+    data.orders.slice(0,10).forEach(o=>{const p=document.createElement("p");p.className="note";p.textContent="№"+o.id+" · "+({photo:"Фото",edit:"Редактирование",video:"Видео"}[o.service]||o.service)+" · "+(o.amount_kopecks/100)+" ₽ · "+({pending:"Ожидает оплаты",paid:"Оплачен",processing:"В обработке",completed:"Готов"}[o.status]||o.status);root.appendChild(p)})
+  }catch(e){$("orderList").textContent="История заказов временно недоступна."}
+}
+$("refreshOrders").onclick=loadOrders;
+$("orderPhoto").onclick=()=>createPendingOrder("photo","portraitSummary");
+$("orderVideo").onclick=()=>createPendingOrder("video","videoStatus");
 function renderHistory(){const el=$("history");el.replaceChildren();let items=[];try{items=JSON.parse(localStorage.getItem("velora_history_"+currentEmail)||"[]")}catch{};items.forEach(url=>{const a=document.createElement("a");a.href=url;a.target="_blank";a.rel="noopener noreferrer";const img=document.createElement("img");img.src=url;img.alt="Ранее созданное изображение";a.appendChild(img);el.appendChild(a)})}
 $("generate").onclick=async()=>{
 const f=$("photo").files[0];if(!f){$("status").textContent="Загрузи фотографию";return}
