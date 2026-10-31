@@ -25,17 +25,17 @@ footer{text-align:center;padding:30px;color:#999;font-size:13px}
 <button id="authSubmit" type="button">Войти</button><button id="authToggle" class="secondary" type="button">Создать аккаунт</button>
 <div id="authStatus" class="status" role="status" aria-live="polite"></div></section>
 <section id="accountPanel" class="panel hidden"><h2>Личный кабинет</h2><p id="accountEmail" class="muted"></p>
-<p>Доступно генераций: <span id="credits" class="badge">—</span></p><p class="note">Новый тариф: 49 ₽ за фотографию. Оплата пока подключается. Текущий баланс отображается по данным сервера.</p>
+<span id="credits" class="hidden" aria-hidden="true"></span><p class="note">Все услуги платные. Бесплатные генерации отменены. Приём платежей пока не открыт.</p>
 <button id="logout" class="secondary" type="button">Выйти</button></section>
-<section class="panel" id="pricingPanel"><h2>Стоимость фотосессии</h2><p><strong>1 генерация фотографии — 49 ₽</strong></p><p class="note">Оплата через Робокассу появится после активации магазина и проверки интеграции. Сейчас приём платежей отключён.</p></section>
+<section class="panel" id="pricingPanel"><h2>Стоимость услуг</h2><p><strong>📸 Генерация фото — 99 ₽</strong></p><p><strong>🎨 Редактирование фото — 149 ₽</strong></p><p><strong>🎬 Генерация видео — 299 ₽</strong></p><p class="note">Оплата через Робокассу появится после активации магазина и проверки интеграции. Сейчас приём платежей отключён.</p></section>
 <section id="studioPanel" class="panel hidden"><h2>ИИ-фотостудия</h2>
 <label for="photo">📸 Загрузи фотографию</label><input type="file" id="photo" accept="image/jpeg,image/png">
 <img id="preview" class="preview" alt="Исходная фотография">
 <label for="mode">✨ Выбери режим</label><select id="mode"><option value="real">Реалистичная фотосессия</option><option value="cartoon">Мультяшная обработка</option></select>
 <label for="style">🎨 Выбери стиль</label><select id="style"></select>
 <label for="prompt">📝 Твои пожелания</label><textarea id="prompt" placeholder="Например: вечернее платье, Париж, мягкий свет"></textarea>
-<button id="generate" type="button">✨ Создать фотографию</button>
-<p class="note">Генерация доступна после подключения защищённого серверного маршрута с проверкой аккаунта и списанием кредитов. Тестовый ключ в браузере не используется.</p>
+<button id="generate" type="button" disabled>✨ Генерация скоро откроется</button>
+<p class="note">Оплата и генерация временно недоступны до завершения подключения Ranvik и Robokassa.</p>
 <div id="status" class="status" role="status" aria-live="polite"></div></section>
 <section id="resultPanel" class="panel hidden"><h2>Результат</h2><img id="result" class="preview" alt="Результат генерации"><button id="download" type="button" class="hidden">📥 Сохранить фотографию</button></section>
 <section id="historyPanel" class="panel hidden"><h2>История на этом устройстве</h2><p class="note">Сохраняются только ссылки на последние изображения в этом браузере. Это не облачная история аккаунта.</p><div id="history" class="history"></div></section>
