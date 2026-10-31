@@ -351,6 +351,41 @@ app.get("/api/orders/:id", authenticate, async (req, res) => {
   }
 });
 
+// Test checkout links are only generated for the authenticated owner of a pending order.
+// Never expose the merchant password, and never issue a live-payment URL here.
+app.post("/api/orders/:id/test-payment", authenticate, async (req, res) => {
+  if (!/^[1-9][0-9]*$/.test(req.params.id)) return res.status(400).json({success:false,error:"Некорректный номер заказа"});
+  const merchant = process.env.ROBOKASSA_MERCHANT_LOGIN || "veloraai";
+  const password = process.env.ROBOKASSA_TEST_PASSWORD1;
+  const algorithm = (process.env.ROBOKASSA_HASH_ALGORITHM || "").toLowerCase();
+  if (!password || !["md5","sha256","sha512"].includes(algorithm)) {
+    return res.status(503).json({success:false,error:"Тестовая оплата не настроена"});
+  }
+  try {
+    if (!(await ordersReady)) return res.status(503).json({success:false,error:"Система заказов недоступна"});
+    const result = await pool.query(
+      "SELECT id, service, amount_kopecks, status FROM orders WHERE id=$1 AND user_id=$2",
+      [req.params.id, req.userId]
+    );
+    if (!result.rows.length) return res.status(404).json({success:false,error:"Заказ не найден"});
+    const order = result.rows[0];
+    if (order.status !== "pending") return res.status(409).json({success:false,error:"Заказ уже обработан"});
+    const outSum = (order.amount_kopecks / 100).toFixed(2);
+    const invId = String(order.id);
+    const signature = crypto.createHash(algorithm)
+      .update(`${merchant}:${outSum}:${invId}:${password}`, "utf8").digest("hex");
+    const params = new URLSearchParams({
+      MerchantLogin:merchant, OutSum:outSum, InvId:invId,
+      Description:"Velora AI - test order " + invId,
+      SignatureValue:signature, IsTest:"1", Culture:"ru"
+    });
+    return res.json({success:true,testMode:true,paymentUrl:"https://auth.robokassa.ru/Merchant/Index.aspx?"+params.toString()});
+  } catch (error) {
+    console.error("Test checkout link error:",error);
+    return res.status(503).json({success:false,error:"Тестовая оплата временно недоступна"});
+  }
+});
+
 // Robokassa ResultURL (legacy form callback). No browser redirect can mark an order paid.
 // Production callbacks use ROBOKASSA_PASSWORD2; test callbacks use ROBOKASSA_TEST_PASSWORD2.
 // Verified test notifications never mark an order paid or enable generation.
