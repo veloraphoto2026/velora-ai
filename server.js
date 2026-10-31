@@ -448,6 +448,12 @@ app.post("/api/orders/:id/generate-photo", authenticate, async (req, res) => {
   if (typeof prompt !== "string" || prompt.trim().length < 5 || prompt.length > 2000) {
     return res.status(400).json({success:false,error:"Опишите фотографию (5–2000 символов)"});
   }
+  const referenceImage = req.body?.image;
+  if (referenceImage !== undefined && (typeof referenceImage !== "string" ||
+      !/^data:image\/(jpeg|png);base64,[A-Za-z0-9+/]+={0,2}$/.test(referenceImage) ||
+      referenceImage.length > 11 * 1024 * 1024)) {
+    return res.status(400).json({success:false,error:"Нужна фотография JPEG/PNG размером до 8 МБ"});
+  }
   const key = process.env.RANVIK_API_KEY;
   if (!key) return res.status(503).json({success:false,error:"Ranvik ещё не настроен"});
   try {
@@ -467,7 +473,8 @@ app.post("/api/orders/:id/generate-photo", authenticate, async (req, res) => {
         headers:{"Authorization":"Bearer "+key,"Content-Type":"application/json"},
         body:JSON.stringify({
           model:"krea-2-turbo",positivePrompt:prompt.trim(),
-          width:832,height:1248,numberResults:1,deliveryMethod:"sync"
+          width:832,height:1248,numberResults:1,deliveryMethod:"sync",
+          ...(referenceImage ? {inputs:{referenceImages:[{image:referenceImage,strength:0.8}]}} : {})
         }),
         signal:AbortSignal.timeout(120000)
       });
