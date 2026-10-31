@@ -41,8 +41,9 @@ async function initDatabase() {
   console.log("Velora AI database ready");
 }
 
-initDatabase().catch(error => {
+const databaseReady = initDatabase().then(() => true).catch(error => {
   console.error("Database initialization failed:", error);
+  return false;
 });
 
 // WEBSITE
@@ -285,7 +286,11 @@ async function initOrders() {
   `);
   await pool.query("CREATE INDEX IF NOT EXISTS orders_user_created_idx ON orders(user_id, created_at DESC)");
 }
-const ordersReady = initOrders().then(() => true).catch(error => { console.error("Order table initialization failed:", error); return false; });
+const ordersReady = databaseReady.then(async ready => {
+  if (!ready) return false;
+  await initOrders();
+  return true;
+}).catch(error => { console.error("Order table initialization failed:", error); return false; });
 
 // Paid service catalog. All prices are in RUB; never trust client-supplied amounts.
 const SERVICES = Object.freeze({
