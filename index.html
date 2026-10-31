@@ -26,7 +26,7 @@ footer{text-align:center;padding:30px;color:#999;font-size:13px}
 <div id="authStatus" class="status" role="status" aria-live="polite"></div></section>
 <section id="accountPanel" class="panel hidden"><h2>Личный кабинет</h2><p id="accountEmail" class="muted"></p>
 <span id="credits" class="hidden" aria-hidden="true"></span><p class="note">Все услуги платные. Бесплатные генерации отменены. Приём платежей пока не открыт.</p>
-<button id="logout" class="secondary" type="button">Выйти</button></section>
+<button id="logout" class="secondary" type="button">Выйти</button><div id="ranvikTestPanel" class="hidden"><button id="ranvikTestButton" type="button">🧪 Проверить нейросеть</button><div id="ranvikTestStatus" class="status" role="status" aria-live="polite"></div><img id="ranvikTestImage" class="preview" alt="Тестовое изображение Ranvik"></div></section>
 <section class="panel" id="pricingPanel"><h2>Стоимость услуг</h2><p><strong>📸 Генерация фото — 99 ₽</strong></p><p><strong>🎨 Редактирование фото — 149 ₽</strong></p><p><strong>🎬 Генерация видео — 299 ₽</strong></p><p class="note">Оплата через Робокассу появится после активации магазина и проверки интеграции. Сейчас приём платежей отключён.</p></section>
 <section id="studioPanel" class="panel hidden"><h2>ИИ-фотостудия</h2>
 <label for="photo">📸 Загрузи фотографию</label><input type="file" id="photo" accept="image/jpeg,image/png">
@@ -62,6 +62,17 @@ token=newToken;currentEmail=email;sessionStorage.setItem("velora_token",token);s
 $("credits").textContent=Number.isFinite(Number(data.credits))&&data.credits!==undefined?data.credits:(data.user?.credits??"—");
 showAccount(true);$("password").value="";
 }catch(e){$("authStatus").textContent=e.message}finally{$("authSubmit").disabled=false}};
+// Test button is displayed to the signed-in account, but authorization is enforced on the server.
+$("ranvikTestPanel").classList.remove("hidden");
+$("ranvikTestButton").onclick=async()=>{
+  const btn=$("ranvikTestButton");btn.disabled=true;
+  $("ranvikTestStatus").textContent="Проверяем Ranvik. Возможен расход баланса на одно изображение...";
+  try{
+    const data=await api("/api/admin/ranvik-test",{method:"POST",headers:{"Authorization":"Bearer "+token}});
+    $("ranvikTestImage").src=data.image;$("ranvikTestImage").style.display="block";
+    $("ranvikTestStatus").textContent="Готово! Ranvik создал тестовое изображение.";
+  }catch(e){$("ranvikTestStatus").textContent=e.message}
+};
 $("logout").onclick=()=>{token="";currentEmail="";sessionStorage.removeItem("velora_token");sessionStorage.removeItem("velora_email");$("credits").textContent="—";showAccount(false)};
 $("photo").onchange=()=>{if(previewUrl)URL.revokeObjectURL(previewUrl);$("preview").style.display="none";const f=$("photo").files[0];if(!f)return;if(!["image/jpeg","image/png"].includes(f.type)||f.size>8*1024*1024){$("status").textContent="Нужен JPEG/PNG не больше 8 МБ";$("photo").value="";return}previewUrl=URL.createObjectURL(f);$("preview").src=previewUrl;$("preview").style.display="block";$("status").textContent="Фото загружено"};
 function renderHistory(){const el=$("history");el.replaceChildren();let items=[];try{items=JSON.parse(localStorage.getItem("velora_history_"+currentEmail)||"[]")}catch{};items.forEach(url=>{const a=document.createElement("a");a.href=url;a.target="_blank";a.rel="noopener noreferrer";const img=document.createElement("img");img.src=url;img.alt="Ранее созданное изображение";a.appendChild(img);el.appendChild(a)})}
