@@ -499,6 +499,54 @@ app.post("/api/orders/:id/generate-photo", authenticate, async (req, res) => {
   }
 });
 
+// One-time administrator-only Ranvik connectivity test.
+// Requires a dedicated admin email and explicit opt-in in server environment.
+// No public or unpaid customer can invoke this endpoint.
+app.post("/api/admin/ranvik-test", authenticate, async (req, res) => {
+  const adminEmail = (process.env.VELORA_ADMIN_EMAIL || "").trim().toLowerCase();
+  if (!adminEmail || process.env.VELORA_RANVIK_TEST_ENABLED !== "true") {
+    return res.status(404).json({success:false,error:"Тестирование отключено"});
+  }
+  try {
+    const user = await pool.query("SELECT email FROM users WHERE id=$1",[req.userId]);
+    if (!user.rows.length || user.rows[0].email.toLowerCase() !== adminEmail) {
+      return res.sendStatus(403);
+    }
+    const key = process.env.RANVIK_API_KEY;
+    if (!key) return res.status(503).json({success:false,error:"Ключ Ranvik не настроен"});
+    // A single server-process test attempt is allowed per deployment.
+    if (app.locals.ranvikTestAttempted) return res.status(429).json({success:false,error:"Тест уже запускался. Повторный запуск заблокирован"});
+    app.locals.ranvikTestAttempted = true;
+    const response = await fetch("https://api.ranvik.ru/v1/images/generations",{
+      method:"POST",
+      headers:{"Authorization":"Bearer "+key,"Content-Type":"application/json"},
+      body:JSON.stringify({
+        model:"krea-2-turbo",
+        positivePrompt:"Elegant studio still life of a single golden rose on a black background, professional photography",
+        width:832,height:1248,numberResults:1,deliveryMethod:"sync"
+      }),
+      signal:AbortSignal.timeout(120000)
+    });
+    if (!response.ok) {
+      console.error("Ranvik admin test HTTP status",response.status);
+      return res.status(502).json({success:false,error:"Ranvik вернул HTTP "+response.status});
+    }
+    const payload = await response.json().catch(()=>null);
+    const item = payload?.data?.[0] || payload?.images?.[0] || payload?.output?.[0] || payload?.data?.images?.[0] || payload?.result?.images?.[0];
+    const image = (typeof item === "string" ? item : item?.url || item?.imageUrl || item?.image_url ||
+      (item?.b64_json ? "data:image/png;base64,"+item.b64_json : null)) ||
+      payload?.image || payload?.imageUrl || payload?.data?.url || payload?.result?.url;
+    if (typeof image !== "string" || !(image.startsWith("https://") || image.startsWith("data:image/"))) {
+      console.error("Ranvik admin test response missing image; keys",Object.keys(payload || {}));
+      return res.status(502).json({success:false,error:"Ranvik ответил, но изображение не найдено в ответе"});
+    }
+    return res.json({success:true,image});
+  } catch (err) {
+    console.error("Ranvik admin test failed",err?.name,err?.message);
+    return res.status(502).json({success:false,error:"Не удалось завершить тест Ranvik"});
+  }
+});
+
 // AI PHOTO GENERATION
 // Only authenticated account requests are permitted.
 
