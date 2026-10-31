@@ -25,7 +25,7 @@ footer{text-align:center;padding:30px;color:#999;font-size:13px}
 <button id="authSubmit" type="button">Войти</button><button id="authToggle" class="secondary" type="button">Создать аккаунт</button>
 <div id="authStatus" class="status" role="status" aria-live="polite"></div></section>
 <section id="accountPanel" class="panel hidden"><h2>Личный кабинет</h2><p id="accountEmail" class="muted"></p>
-<p class="note">Все услуги платные. Бесплатные генерации отключены. Оплата пока недоступна.</p>
+<span id="credits" class="hidden" aria-hidden="true"></span><p class="note">Все услуги платные. Бесплатные генерации отключены. Оплата пока недоступна.</p>
 <button id="logout" class="secondary" type="button">Выйти</button></section>
 <section class="panel" id="pricingPanel"><h2>Стоимость услуг</h2><p><strong>Генерация фото — 99 ₽</strong></p><p><strong>Редактирование фото — 149 ₽</strong></p><p><strong>Генерация видео — 299 ₽</strong></p><p class="note">Оплата через Робокассу появится после активации магазина и проверки интеграции. Сейчас приём платежей отключён.</p></section>
 <section id="studioPanel" class="panel hidden"><h2>ИИ-фотостудия</h2>
@@ -59,10 +59,10 @@ try{const data=await api(registering?"/api/register":"/api/login",{method:"POST"
 const newToken=data.token||data.accessToken||data.access_token;
 if(!newToken)throw new Error("Сервер не вернул токен. Требуется согласовать формат ответа.");
 token=newToken;currentEmail=email;sessionStorage.setItem("velora_token",token);sessionStorage.setItem("velora_email",email);
-void 0 && $("credits").textContent=Number.isFinite(Number(data.credits))&&data.credits!==undefined?data.credits:(data.user?.credits??"—");
+$("credits").textContent=Number.isFinite(Number(data.credits))&&data.credits!==undefined?data.credits:(data.user?.credits??"—");
 showAccount(true);$("password").value="";
 }catch(e){$("authStatus").textContent=e.message}finally{$("authSubmit").disabled=false}};
-$("logout").onclick=()=>{token="";currentEmail="";sessionStorage.removeItem("velora_token");sessionStorage.removeItem("velora_email");void 0 && $("credits").textContent="—";showAccount(false)};
+$("logout").onclick=()=>{token="";currentEmail="";sessionStorage.removeItem("velora_token");sessionStorage.removeItem("velora_email");$("credits").textContent="—";showAccount(false)};
 $("photo").onchange=()=>{if(previewUrl)URL.revokeObjectURL(previewUrl);$("preview").style.display="none";const f=$("photo").files[0];if(!f)return;if(!["image/jpeg","image/png"].includes(f.type)||f.size>8*1024*1024){$("status").textContent="Нужен JPEG/PNG не больше 8 МБ";$("photo").value="";return}previewUrl=URL.createObjectURL(f);$("preview").src=previewUrl;$("preview").style.display="block";$("status").textContent="Фото загружено"};
 function renderHistory(){const el=$("history");el.replaceChildren();let items=[];try{items=JSON.parse(localStorage.getItem("velora_history_"+currentEmail)||"[]")}catch{};items.forEach(url=>{const a=document.createElement("a");a.href=url;a.target="_blank";a.rel="noopener noreferrer";const img=document.createElement("img");img.src=url;img.alt="Ранее созданное изображение";a.appendChild(img);el.appendChild(a)})}
 $("generate").onclick=async()=>{
@@ -72,10 +72,10 @@ try{
 const image=await new Promise((ok,fail)=>{const r=new FileReader();r.onload=()=>ok(r.result);r.onerror=fail;r.readAsDataURL(f)});
 const prompt=[$("mode").value==="cartoon"?"Мультяшная обработка":"Реалистичная фотосессия",$("style").value,$("prompt").value].filter(Boolean).join(". ");
 const data=await api("/api/generate",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+token},body:JSON.stringify({image,prompt})});
-latestImage=data.image;$("result").src=latestImage;$("result").style.display="block";$("resultPanel").classList.remove("hidden");$("download").classList.remove("hidden");void 0 && $("credits").textContent=data.credits;$("status").textContent="Готово!";
-}catch(e){$("status").textContent=e.message;try{const me=await api("/api/me",{headers:{"Authorization":"Bearer "+token}});void 0 && $("credits").textContent=me.user.credits}catch{}}
+latestImage=data.image;$("result").src=latestImage;$("result").style.display="block";$("resultPanel").classList.remove("hidden");$("download").classList.remove("hidden");$("credits").textContent=data.credits;$("status").textContent="Готово!";
+}catch(e){$("status").textContent=e.message;try{const me=await api("/api/me",{headers:{"Authorization":"Bearer "+token}});$("credits").textContent=me.user.credits}catch{}}
 finally{btn.disabled=false}
 };
 $("download").onclick=()=>{if(!latestImage)return;window.open(latestImage,"_blank","noopener,noreferrer")};
-if(token&&currentEmail){api("/api/me",{headers:{"Authorization":"Bearer "+token}}).then(data=>{currentEmail=data.user.email;sessionStorage.setItem("velora_email",currentEmail);void 0 && $("credits").textContent=data.user.credits;showAccount(true)}).catch(()=>{$("logout").click()})}else{showAccount(false)}
+if(token&&currentEmail){api("/api/me",{headers:{"Authorization":"Bearer "+token}}).then(data=>{currentEmail=data.user.email;sessionStorage.setItem("velora_email",currentEmail);$("credits").textContent=data.user.credits;showAccount(true)}).catch(()=>{$("logout").click()})}else{showAccount(false)}
 </script></body></html>
