@@ -39,6 +39,15 @@ footer{text-align:center;padding:30px;color:#999;font-size:13px}
 <button id="generate" type="button" disabled>🔒 Создать портрет — 99 ₽ (скоро)</button>
 <p class="note">Подготовка фотосессии бесплатна и не отправляет фото в нейросеть. Генерация станет доступна только после проверки оплаты и обработки селфи через Ranvik.</p>
 <div id="status" class="status" role="status" aria-live="polite"></div></section>
+<section id="videoStudioPanel" class="panel hidden"><h2>🎬 Видео и оживление фото</h2>
+<p class="muted">Создай короткий ролик по описанию или оживи любимую фотографию.</p>
+<label for="videoMode">✨ Что создаём</label><select id="videoMode"><option value="animate">Оживить фотографию</option><option value="text">Видео по описанию</option></select>
+<div id="videoPhotoFields"><label for="videoPhoto">📸 Фотография для оживления</label><input id="videoPhoto" type="file" accept="image/jpeg,image/png"><img id="videoPreview" class="preview" alt="Кадр для оживления"></div>
+<label for="videoPrompt">🎥 Как должно двигаться изображение</label><textarea id="videoPrompt" maxlength="1000" placeholder="Например: девушка плавно поворачивает голову, моргает и мягко улыбается. Камера медленно приближается. Внешность не менять."></textarea>
+<label for="videoRatio">📐 Формат</label><select id="videoRatio"><option value="9:16">9:16 — сторис и Reels</option><option value="16:9">16:9 — горизонтальное видео</option></select>
+<button id="prepareVideo" type="button">✨ Подготовить видео</button><div id="videoStatus" class="status" role="status" aria-live="polite"></div>
+<button type="button" disabled>🔒 Создать видео — 299 ₽ (скоро)</button>
+<p class="note">Подготовка не отправляет фото в Ranvik и не расходует баланс. Генерация откроется после проверки видео API и оплаты.</p></section>
 <section id="resultPanel" class="panel hidden"><h2>Результат</h2><img id="result" class="preview" alt="Результат генерации"><button id="download" type="button" class="hidden">📥 Сохранить фотографию</button></section>
 <section id="historyPanel" class="panel hidden"><h2>История на этом устройстве</h2><p class="note">Сохраняются только ссылки на последние изображения в этом браузере. Это не облачная история аккаунта.</p><div id="history" class="history"></div></section>
 </main><footer>© 2026 VELORA AI · Бета-версия<br><a href="/oferta.html" style="display:inline-block;margin-top:12px;color:#d9b76e;text-decoration:underline">Публичная оферта</a></footer>
@@ -51,7 +60,7 @@ let registering=false,previewUrl=null,latestImage="";
 const styles={real:["Деловая фотосессия","Fashion","Путешествия","Романтика","Кинопортрет","Luxury"],cartoon:["3D-анимация","Аниме","Мультяшный 3D-портрет","Рисованная иллюстрация","Сказочный персонаж","Романтический мультфильм"]};
 function updateStyles(){ $("style").replaceChildren(...styles[$("mode").value].map(s=>new Option(s,s))) }
 $("mode").addEventListener("change",updateStyles);updateStyles();
-function showAccount(on){$("authPanel").classList.toggle("hidden",on);["accountPanel","studioPanel","resultPanel","historyPanel"].forEach(id=>$(id).classList.toggle("hidden",!on));$("accountEmail").textContent=currentEmail;if(on)renderHistory()}
+function showAccount(on){$("authPanel").classList.toggle("hidden",on);["accountPanel","studioPanel","videoStudioPanel","resultPanel","historyPanel"].forEach(id=>$(id).classList.toggle("hidden",!on));$("accountEmail").textContent=currentEmail;if(on)renderHistory()}
 function setAuthMode(){ $("authTitle").textContent=registering?"Регистрация":"Вход в Velora AI";$("authSubmit").textContent=registering?"Зарегистрироваться":"Войти";$("authToggle").textContent=registering?"У меня уже есть аккаунт":"Создать аккаунт";$("authStatus").textContent="" }
 $("authToggle").onclick=()=>{registering=!registering;setAuthMode()};
 async function api(path,options={}){const r=await fetch(API+path,options);const body=await r.json().catch(()=>({}));if(!r.ok)throw new Error(body.error||body.message||"Ошибка сервера ("+r.status+")");return body}
@@ -85,6 +94,9 @@ $("preparePortrait").onclick=()=>{
   const wishes=$("prompt").value.trim();
   $("portraitSummary").textContent="Фотосессия подготовлена: "+mode+" · "+style+(wishes?" · "+wishes:"")+". Фото остаётся на устройстве. Для создания изображения потребуется оплата 99 ₽ после открытия сервиса.";
 };
+$("videoMode").onchange=()=>{$("videoPhotoFields").classList.toggle("hidden",$("videoMode").value==="text");$("videoPrompt").placeholder=$("videoMode").value==="text"?"Например: кинематографичный пролёт камеры над Парижем на закате":"Например: девушка поворачивает голову, моргает и улыбается, внешность не менять"};
+$("videoPhoto").onchange=()=>{const f=$("videoPhoto").files[0];const img=$("videoPreview");if(img.dataset.objectUrl)URL.revokeObjectURL(img.dataset.objectUrl);img.style.display="none";if(!f)return;if(!["image/jpeg","image/png"].includes(f.type)||f.size>8*1024*1024){$("videoStatus").textContent="Выбери JPEG/PNG до 8 МБ";$("videoPhoto").value="";return}const url=URL.createObjectURL(f);img.dataset.objectUrl=url;img.src=url;img.style.display="block";$("videoStatus").textContent="Фото выбрано"};
+$("prepareVideo").onclick=()=>{const mode=$("videoMode").value;if(mode==="animate"&&!$("videoPhoto").files[0]){$("videoStatus").textContent="Загрузи фотографию для оживления.";return}const prompt=$("videoPrompt").value.trim();if(prompt.length<5){$("videoStatus").textContent="Опиши движение или сюжет (не менее 5 символов).";return}$("videoStatus").textContent="Подготовлено: "+(mode==="animate"?"оживление фото":"видео по описанию")+" · "+$("videoRatio").value+" · "+prompt+". Создание ролика за 299 ₽ пока закрыто до подключения оплаты."};
 function renderHistory(){const el=$("history");el.replaceChildren();let items=[];try{items=JSON.parse(localStorage.getItem("velora_history_"+currentEmail)||"[]")}catch{};items.forEach(url=>{const a=document.createElement("a");a.href=url;a.target="_blank";a.rel="noopener noreferrer";const img=document.createElement("img");img.src=url;img.alt="Ранее созданное изображение";a.appendChild(img);el.appendChild(a)})}
 $("generate").onclick=async()=>{
 const f=$("photo").files[0];if(!f){$("status").textContent="Загрузи фотографию";return}
