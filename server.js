@@ -1,6 +1,6 @@
+const crypto = require("crypto");
 const express = require("express");
 const cors = require("cors");
-const Replicate = require("replicate");
 const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
@@ -11,9 +11,7 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "15mb" }));
 
-const replicate = new Replicate({
-  auth: process.env.REPLICATE_API_TOKEN
-});
+// Legacy provider is intentionally disabled until paid-order authorization is implemented.
 
 // DATABASE
 
@@ -32,14 +30,14 @@ async function initDatabase() {
       id BIGSERIAL PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
-      credits INTEGER NOT NULL DEFAULT 2,
+      credits INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
 
     await pool.query(`
     ALTER TABLE users
-    ALTER COLUMN credits SET DEFAULT 2
+    ALTER COLUMN credits SET DEFAULT 0
   `);
 
   console.log("Velora AI database ready");
@@ -79,7 +77,7 @@ app.post("/api/register", async (req, res) => {
     if (
       typeof email !== "string" ||
       typeof password !== "string" ||
-      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) ||
       password.length < 8 ||
       password.length > 128
     ) {
@@ -271,95 +269,134 @@ app.get("/api/me", authenticate, async (req, res) => {
   }
 });
 
-// AI PHOTO GENERATION
-// Only authenticated account requests are permitted.
+// Durable order ledger: pending orders do not grant generation access.
+// This endpoint creates an unpaid order only. No payment URLs are issued yet.
+async function initOrders() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS orders (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id),
+      service TEXT NOT NULL CHECK (service IN ('photo','edit','video')),
+      amount_kopecks INTEGER NOT NULL CHECK (amount_kopecks > 0),
+      currency TEXT NOT NULL DEFAULT 'RUB' CHECK (currency = 'RUB'),
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','paid','processing','completed','failed','refunded')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      paid_at TIMESTAMPTZ,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query("CREATE INDEX IF NOT EXISTS orders_user_created_idx ON orders(user_id, created_at DESC)");
+}
+const ordersReady = initOrders().then(() => true).catch(error => { console.error("Order table initialization failed:", error); return false; });
 
-app.post("/api/generate", authenticate, async (req, res) => {
+// Paid service catalog. All prices are in RUB; never trust client-supplied amounts.
+const SERVICES = Object.freeze({
+  photo: { name: "Генерация фотографии", priceRub: 99 },
+  edit: { name: "Редактирование фотографии", priceRub: 149 },
+  video: { name: "Генерация видео", priceRub: 299 }
+});
+app.get("/api/services", (_req, res) => res.json({success:true, currency:"RUB", services:SERVICES, paymentsEnabled:false, generationEnabled:false}));
+app.post("/api/orders", authenticate, async (req, res) => {
+  const service = req.body?.service;
+  if (typeof service !== "string" || !Object.prototype.hasOwnProperty.call(SERVICES, service)) {
+    return res.status(400).json({success:false, error:"Неизвестная услуга"});
+  }
   try {
-    const { image, prompt } = req.body || {};
-
-    if (
-      typeof image !== "string" ||
-      image.length > 11 * 1024 * 1024 ||
-      !(
-        image.startsWith("data:image/jpeg;base64,") ||
-        image.startsWith("data:image/png;base64,")
-      )
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: "Необходима фотография JPEG или PNG"
-      });
-    }
-
-    if (
-      typeof prompt !== "string" ||
-      !prompt.trim() ||
-      prompt.length > 1500
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: "Некорректное описание фотографии"
-      });
-    }
-
-    if (!process.env.REPLICATE_API_TOKEN) {
-      return res.status(503).json({ success: false, error: "Генерация временно недоступна" });
-    }
-
-    const debit = await pool.query(
-      "UPDATE users SET credits = credits - 1 WHERE id = $1 AND credits > 0 RETURNING credits",
-      [req.userId]
+    if (!(await ordersReady)) return res.status(503).json({success:false, error:"Система заказов временно недоступна"});
+    const order = await pool.query(
+      "INSERT INTO orders (user_id, service, amount_kopecks) VALUES ($1,$2,$3) RETURNING id, service, amount_kopecks, currency, status, created_at",
+      [req.userId, service, SERVICES[service].priceRub * 100]
     );
-    if (!debit.rows.length) {
-      return res.status(402).json({ success: false, error: "Бесплатные генерации закончились" });
-    }
-    let output;
-    try {
-      output = await replicate.run(
-      "black-forest-labs/flux-kontext-pro",
-      {
-        input: {
-          prompt: prompt.trim(),
-          input_image: image,
-          output_format: "jpg",
-          aspect_ratio: "match_input_image"
-        }
-      }
-    );
-
-    } catch (generationError) {
-      await pool.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [req.userId]);
-      return res.status(502).json({ success: false, error: "Generation failed; credit restored" });
-    }
-    const first = Array.isArray(output) ? output[0] : output;
-    const imageUrl =
-      typeof first === "string"
-        ? first
-        : typeof first?.url === "function"
-          ? String(first.url())
-          : null;
-
-    if (!imageUrl || !imageUrl.startsWith("https://")) {
-      await pool.query("UPDATE users SET credits = credits + 1 WHERE id = $1", [req.userId]);
-      return res.status(502).json({ success: false, error: "No image returned; credit restored" });
-    }
-
-    res.json({
-      success: true,
-      image: imageUrl,
-      credits: debit.rows[0].credits
-    });
-
+    return res.status(201).json({success:true, order:order.rows[0], paymentAvailable:false});
   } catch (error) {
-    console.error("Generation error:", error);
-
-    res.status(500).json({
-      success: false,
-      error: "Ошибка генерации фотографии"
-    });
+    console.error("Order creation error:", error);
+    return res.status(503).json({success:false, error:"Создание заказа временно недоступно"});
   }
 });
+app.get("/api/orders", authenticate, async (req, res) => {
+  try {
+    if (!(await ordersReady)) return res.status(503).json({success:false, error:"Система заказов временно недоступна"});
+    const orders = await pool.query(
+      "SELECT id, service, amount_kopecks, currency, status, created_at, paid_at FROM orders WHERE user_id=$1 ORDER BY created_at DESC LIMIT 50",
+      [req.userId]
+    );
+    return res.json({success:true, orders:orders.rows});
+  } catch (error) {
+    console.error("Order list error:", error);
+    return res.status(503).json({success:false, error:"История заказов временно недоступна"});
+  }
+});
+
+
+// Individual order lookup is always scoped to the authenticated owner.
+app.get("/api/orders/:id", authenticate, async (req, res) => {
+  if (!/^[1-9][0-9]*$/.test(req.params.id)) {
+    return res.status(400).json({success:false, error:"Некорректный номер заказа"});
+  }
+  try {
+    if (!(await ordersReady)) return res.status(503).json({success:false, error:"Система заказов временно недоступна"});
+    const result = await pool.query(
+      "SELECT id, service, amount_kopecks, currency, status, created_at, paid_at FROM orders WHERE id=$1 AND user_id=$2",
+      [req.params.id, req.userId]
+    );
+    if (!result.rows.length) return res.status(404).json({success:false, error:"Заказ не найден"});
+    return res.json({success:true, order:result.rows[0]});
+  } catch (error) {
+    console.error("Order lookup error:", error);
+    return res.status(503).json({success:false, error:"Заказ временно недоступен"});
+  }
+});
+
+// Robokassa ResultURL (legacy form callback). No browser redirect can mark an order paid.
+// Configure ROBOKASSA_PASSWORD2 and ROBOKASSA_HASH_ALGORITHM on the server.
+// Payment initiation stays disabled until fiscal receipt settings are verified.
+app.post("/api/payments/robokassa/result", express.urlencoded({extended:false,limit:"16kb"}), async (req, res) => {
+  const { OutSum, InvId, SignatureValue } = req.body || {};
+  const password = process.env.ROBOKASSA_PASSWORD2;
+  const algorithm = (process.env.ROBOKASSA_HASH_ALGORITHM || "").toLowerCase();
+  if (!password || !["md5","sha256","sha512"].includes(algorithm)) return res.sendStatus(503);
+  if (typeof OutSum !== "string" || !/^\\d+\\.\\d{1,6}$/.test(OutSum) ||
+      typeof InvId !== "string" || !/^[1-9]\\d*$/.test(InvId) ||
+      typeof SignatureValue !== "string" || !/^[0-9a-fA-F]+$/.test(SignatureValue)) return res.sendStatus(400);
+  // Reject optional Shp_* until the signed custom-parameter contract is implemented.
+  if (Object.keys(req.body).some(k => /^shp_/i.test(k))) return res.sendStatus(400);
+  const expected = crypto.createHash(algorithm).update(`${OutSum}:${InvId}:${password}`, "utf8").digest();
+  const supplied = Buffer.from(SignatureValue, "hex");
+  if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) return res.sendStatus(403);
+  const [rub, fraction] = OutSum.split(".");
+  const amount = BigInt(rub) * 100n + BigInt((fraction + "000000").slice(0,6)) / 10000n;
+  // Fractions of a kopeck cannot be reconciled.
+  if (BigInt((fraction + "000000").slice(0,6)) % 10000n !== 0n || amount > 2147483647n) return res.sendStatus(400);
+  try {
+    if (!(await ordersReady)) return res.sendStatus(503);
+    const result = await pool.query(
+      `UPDATE orders SET status='paid', paid_at=NOW(), updated_at=NOW()
+       WHERE id=$1 AND amount_kopecks=$2 AND currency='RUB' AND status='pending'
+       RETURNING id`,
+      [InvId, Number(amount)]
+    );
+    if (!result.rowCount) {
+      const existing = await pool.query("SELECT status, amount_kopecks FROM orders WHERE id=$1", [InvId]);
+      if (!existing.rows.length || existing.rows[0].amount_kopecks !== Number(amount) ||
+          !["paid","processing","completed"].includes(existing.rows[0].status)) return res.sendStatus(409);
+    }
+    return res.type("text/plain").send("OK" + InvId);
+  } catch (error) {
+    console.error("Robokassa callback error:", error);
+    return res.sendStatus(503);
+  }
+});
+
+// Fail closed until verified Robokassa payment and a durable order ledger are deployed.
+// Old complimentary credits are retained in the database for audit/compatibility,
+// but can no longer authorize generation.
+const paymentRequired = (_req, res) => res.status(402).json({
+  success:false,
+  error:"Генерация временно недоступна. Оплата и подтверждение заказов ещё подключаются."
+});
+app.post("/api/generate", authenticate, paymentRequired);
+app.post("/api/edit", authenticate, paymentRequired);
+app.post("/api/video", authenticate, paymentRequired);
 
 // START SERVER
 
