@@ -90,15 +90,15 @@ app.post("/api/generate",auth,async(req,res)=>{
 });
 app.post("/api/video",auth,(req,res)=>error(res,503,"Видео ожидает подключения провайдера"));
 const payConfig=()=>{
- const count=Number(process.env.VELORA_PACK_GENERATIONS||"1");
- const kopecks=Number(process.env.VELORA_PACK_PRICE_KOPECKS||"4900");
+ const count=1; // One paid photo generation per order; other services are not enabled yet.
+ const kopecks=9900; // Approved photo-generation price: 99 RUB.
  const algorithm=(process.env.ROBOKASSA_HASH||"md5").toLowerCase();
  const configured=process.env.ROBOKASSA_READY==="true"&&!!process.env.ROBOKASSA_MERCHANT_LOGIN&&!!process.env.ROBOKASSA_PASSWORD1&&!!process.env.ROBOKASSA_PASSWORD2&&Number.isSafeInteger(count)&&count>0&&Number.isSafeInteger(kopecks)&&kopecks>0&&["md5","sha256","sha512"].includes(algorithm);
  return {configured,count,kopecks,algorithm};
 };
 app.get("/api/pricing",(req,res)=>{
  const p=payConfig();
- res.json({success:true,available:p.configured,currency:"RUB",plans:p.configured?[{id:"standard",generations:p.count,amount_kopecks:p.kopecks}]:[],message:p.configured?"":"Оплата ожидает активации и настройки магазина"});
+ res.json({success:true,available:p.configured,currency:"RUB",plans:[{id:"standard",generations:1,amount_kopecks:9900,available:p.configured},{id:"editing",amount_kopecks:14900,available:false},{id:"video",amount_kopecks:29900,available:false}],message:p.configured?"":"Оплата ожидает активации и настройки магазина"});
 });
 app.get("/api/payments/status",auth,(req,res)=>res.json({success:true,provider:"robokassa",enabled:payConfig().configured}));
 app.post("/api/payments/create",auth,async(req,res)=>{
