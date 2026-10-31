@@ -93,7 +93,7 @@ const payConfig=()=>{
  const count=1; // One paid photo generation per order; other services are not enabled yet.
  const kopecks=9900; // Approved photo-generation price: 99 RUB.
  const algorithm=(process.env.ROBOKASSA_HASH||"md5").toLowerCase();
- const configured=process.env.ROBOKASSA_READY==="true"&&!!process.env.ROBOKASSA_MERCHANT_LOGIN&&!!process.env.ROBOKASSA_PASSWORD1&&!!process.env.ROBOKASSA_PASSWORD2&&Number.isSafeInteger(count)&&count>0&&Number.isSafeInteger(kopecks)&&kopecks>0&&["md5","sha256","sha512"].includes(algorithm);
+ const configured=process.env.VELORA_CHECKOUT_READY==="true"&&process.env.RANVIK_GENERATION_READY==="true"&&ranvik.config().enabled&&process.env.ROBOKASSA_READY==="true"&&!!process.env.ROBOKASSA_MERCHANT_LOGIN&&!!process.env.ROBOKASSA_PASSWORD1&&!!process.env.ROBOKASSA_PASSWORD2&&Number.isSafeInteger(count)&&count>0&&Number.isSafeInteger(kopecks)&&kopecks>0&&["md5","sha256","sha512"].includes(algorithm);
  return {configured,count,kopecks,algorithm};
 };
 app.get("/api/pricing",(req,res)=>{
