@@ -396,8 +396,8 @@ app.post("/api/payments/robokassa/result", express.urlencoded({extended:false,li
   const testPassword = process.env.ROBOKASSA_TEST_PASSWORD2;
   const algorithm = (process.env.ROBOKASSA_HASH_ALGORITHM || "").toLowerCase();
   if ((!productionPassword && !testPassword) || !["md5","sha256","sha512"].includes(algorithm)) return res.sendStatus(503);
-  if (typeof OutSum !== "string" || !/^\\d+\\.\\d{2}$/.test(OutSum) ||
-      typeof InvId !== "string" || !/^[1-9]\\d*$/.test(InvId) ||
+  if (typeof OutSum !== "string" || !/^[0-9]+\.[0-9]{2}$/.test(OutSum) ||
+      typeof InvId !== "string" || !/^[1-9][0-9]*$/.test(InvId) ||
       typeof SignatureValue !== "string" || !/^[0-9a-fA-F]+$/.test(SignatureValue)) return res.sendStatus(400);
   // Reject optional Shp_* until the signed custom-parameter contract is implemented.
   if (Object.keys(req.body).some(k => /^shp_/i.test(k))) return res.sendStatus(400);
@@ -483,10 +483,10 @@ app.post("/api/orders/:id/generate-photo", authenticate, async (req, res) => {
       return res.status(502).json({success:false,error:"Ranvik вернул ошибку. Заказ отправлен на проверку."});
     }
     const payload = await response.json().catch(()=>null);
-    const item = payload?.data?.[0] || payload?.images?.[0] || payload?.output?.[0];
+    const item = payload?.data?.[0] || payload?.images?.[0] || payload?.output?.[0] || payload?.data?.images?.[0] || payload?.result?.images?.[0];
     const image = typeof item === "string" ? item :
-      item?.url || item?.b64_json && ("data:image/png;base64,"+item.b64_json) ||
-      payload?.image || payload?.imageUrl;
+      item?.url || item?.imageUrl || item?.image_url || item?.b64_json && ("data:image/png;base64,"+item.b64_json) ||
+      payload?.image || payload?.imageUrl || payload?.data?.url || payload?.result?.url;
     if (typeof image !== "string" || !(image.startsWith("https://") || image.startsWith("data:image/"))) {
       console.error("Unexpected Ranvik response shape for order",req.params.id);
       return res.status(502).json({success:false,error:"Нестандартный ответ Ranvik. Заказ отправлен на проверку."});
