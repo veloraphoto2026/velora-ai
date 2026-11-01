@@ -396,7 +396,7 @@ app.post("/api/payments/robokassa/result", express.urlencoded({extended:false,li
   const testPassword = process.env.ROBOKASSA_TEST_PASSWORD2;
   const algorithm = (process.env.ROBOKASSA_HASH_ALGORITHM || "").toLowerCase();
   if ((!productionPassword && !testPassword) || !["md5","sha256","sha512"].includes(algorithm)) return res.sendStatus(503);
-  if (typeof OutSum !== "string" || !/^[0-9]+\.[0-9]{2}$/.test(OutSum) ||
+  if (typeof OutSum !== "string" || !/^[0-9]+\.[0-9]{2}(?:[0-9]{4})?$/.test(OutSum) ||
       typeof InvId !== "string" || !/^[1-9][0-9]*$/.test(InvId) ||
       typeof SignatureValue !== "string" || !/^[0-9a-fA-F]+$/.test(SignatureValue)) return res.sendStatus(400);
   // Reject optional Shp_* until the signed custom-parameter contract is implemented.

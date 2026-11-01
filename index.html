@@ -133,7 +133,7 @@ $("ranvikTestButton").onclick=async()=>{
     }
   }
 };
-$("logout").onclick=()=>{token="";currentEmail="";sessionStorage.removeItem("velora_token");sessionStorage.removeItem("velora_email");$("credits").textContent="—";showAccount(false)};
+$("logout").onclick=()=>{selectedPaidPhotoOrder=null;$("paidPhotoPanel").classList.add("hidden");token="";currentEmail="";sessionStorage.removeItem("velora_token");sessionStorage.removeItem("velora_email");$("credits").textContent="—";showAccount(false)};
 $("photo").onchange=()=>{if(previewUrl)URL.revokeObjectURL(previewUrl);$("preview").style.display="none";const f=$("photo").files[0];if(!f)return;if(!["image/jpeg","image/png"].includes(f.type)||f.size>8*1024*1024){$("status").textContent="Нужен JPEG/PNG не больше 8 МБ";$("photo").value="";return}previewUrl=URL.createObjectURL(f);$("preview").src=previewUrl;$("preview").style.display="block";$("status").textContent="Фото загружено"};
 $("preparePortrait").onclick=()=>{
   const f=$("photo").files[0];
@@ -161,9 +161,48 @@ async function loadOrders(){
   try{const data=await api("/api/orders",{headers:{"Authorization":"Bearer "+token}});
     const root=$("orderList");root.replaceChildren();
     if(!data.orders.length){root.textContent="Пока нет заказов.";return}
-    data.orders.slice(0,10).forEach(o=>{const p=document.createElement("p");p.className="note";p.textContent="№"+o.id+" · "+({photo:"Фото",edit:"Редактирование",video:"Видео"}[o.service]||o.service)+" · "+(o.amount_kopecks/100)+" ₽ · "+({pending:"Ожидает оплаты",paid:"Оплачен",processing:"В обработке",completed:"Готов"}[o.status]||o.status);root.appendChild(p)})
+    data.orders.slice(0,10).forEach(o=>{const p=document.createElement("p");p.className="note";p.textContent="№"+o.id+" · "+({photo:"Фото",edit:"Редактирование",video:"Видео"}[o.service]||o.service)+" · "+(o.amount_kopecks/100)+" ₽ · "+({pending:"Ожидает оплаты",paid:"Оплачен",processing:"В обработке",completed:"Готов"}[o.status]||o.status);root.appendChild(p);if(o.service==="photo"&&o.status==="paid"){const b=document.createElement("button");b.type="button";b.className="secondary";b.textContent="Создать фото по заказу №"+o.id;b.onclick=()=>openPaidPhotoOrder(o.id);root.appendChild(b)}})
   }catch(e){$("orderList").textContent="История заказов временно недоступна."}
 }
+
+// Paid-order photo workflow: only offered for server-confirmed paid orders.
+// This never initiates a payment or an extra provider call without a user click.
+let selectedPaidPhotoOrder=null, paidPhotoBusy=false;
+const paidPhotoPanel=document.createElement("section");
+paidPhotoPanel.className="panel hidden";
+paidPhotoPanel.id="paidPhotoPanel";
+paidPhotoPanel.innerHTML='<h2>📸 Оплаченная фотосессия</h2><p id="paidPhotoOrderLabel" class="note"></p><label for="paidPhotoPrompt">Описание фотографии</label><textarea id="paidPhotoPrompt" maxlength="2000" placeholder="Например: элегантный портрет в студии, мягкий свет"></textarea><label for="paidPhotoReference">Селфи (необязательно, JPEG/PNG до 8 МБ)</label><input id="paidPhotoReference" type="file" accept="image/jpeg,image/png"><button id="paidPhotoSubmit" type="button">Создать фотографию по оплаченному заказу</button><p class="note">Один запуск на один оплаченный заказ. Не повторяйте запрос при ошибке: проверьте статус заказа.</p><div id="paidPhotoStatus" class="status" role="status" aria-live="polite"></div><img id="paidPhotoResult" class="preview" alt="Готовая фотография" style="display:none"><a id="paidPhotoDownload" class="hidden" target="_blank" rel="noopener noreferrer">Открыть готовое фото для сохранения</a>';
+$("ordersPanel").insertAdjacentElement("afterend",paidPhotoPanel);
+function openPaidPhotoOrder(id){
+  selectedPaidPhotoOrder=String(id);
+  $("paidPhotoOrderLabel").textContent="Заказ №"+id+" — оплачен";
+  $("paidPhotoStatus").textContent="";
+  $("paidPhotoResult").style.display="none";
+  $("paidPhotoResult").removeAttribute("src");
+  $("paidPhotoDownload").classList.add("hidden");
+  $("paidPhotoPanel").classList.remove("hidden");
+  $("paidPhotoPanel").scrollIntoView({behavior:"smooth",block:"start"});
+}
+$("paidPhotoSubmit").onclick=async()=>{
+  if(paidPhotoBusy||!selectedPaidPhotoOrder)return;
+  const prompt=$("paidPhotoPrompt").value.trim(), file=$("paidPhotoReference").files[0];
+  if(prompt.length<5||prompt.length>2000){$("paidPhotoStatus").textContent="Введите описание от 5 до 2000 символов.";return}
+  if(file&&(!["image/jpeg","image/png"].includes(file.type)||file.size>8*1024*1024)){$("paidPhotoStatus").textContent="Выберите JPEG/PNG до 8 МБ.";return}
+  if(!window.confirm("Запустить одну генерацию по оплаченному заказу №"+selectedPaidPhotoOrder+"? Повторный запуск будет заблокирован."))return;
+  const orderId=selectedPaidPhotoOrder, sessionToken=token, btn=$("paidPhotoSubmit");
+  paidPhotoBusy=true;btn.disabled=true;$("paidPhotoStatus").textContent="Создаём изображение. Не закрывайте страницу.";
+  try{
+    const image=file?await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(file)}):undefined;
+    const result=await api("/api/orders/"+encodeURIComponent(orderId)+"/generate-photo",{method:"POST",headers:{"Authorization":"Bearer "+sessionToken,"Content-Type":"application/json"},body:JSON.stringify({prompt,...(image?{image}:{})})});
+    if(token!==sessionToken)return;
+    if(typeof result.image!=="string"||!(/^(https:\/\/|data:image\/(png|jpeg|webp);base64,)/.test(result.image)))throw new Error("Не удалось открыть результат. Обратитесь в поддержку с номером заказа.");
+    $("paidPhotoResult").src=result.image;$("paidPhotoResult").style.display="block";
+    $("paidPhotoDownload").href=result.image;$("paidPhotoDownload").classList.remove("hidden");
+    $("paidPhotoStatus").textContent="Готово! Откройте фото и сохраните его на iPhone.";
+  }catch(e){if(token===sessionToken)$("paidPhotoStatus").textContent=e.message+" Не запускайте генерацию повторно до проверки статуса заказа."}
+  finally{paidPhotoBusy=false;btn.disabled=false;if(token===sessionToken)await loadOrders();}
+};
+
 $("refreshOrders").onclick=loadOrders;
 $("orderPhoto").onclick=()=>createPendingOrder("photo","portraitSummary");
 $("orderVideo").onclick=()=>createPendingOrder("video","videoStatus");
