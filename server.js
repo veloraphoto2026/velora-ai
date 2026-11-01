@@ -509,6 +509,22 @@ app.post("/api/orders/:id/generate-photo", authenticate, async (req, res) => {
 // One-time administrator-only Ranvik connectivity test.
 // Requires a dedicated admin email and explicit opt-in in server environment.
 // No public or unpaid customer can invoke this endpoint.
+// Read-only capability check: never calls Ranvik or changes orders/balances.
+app.get("/api/admin/ranvik-test", authenticate, async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const adminEmail = (process.env.VELORA_ADMIN_EMAIL || "").trim().toLowerCase();
+  if (!adminEmail || process.env.VELORA_RANVIK_TEST_ENABLED !== "true") {
+    return res.json({allowed:false});
+  }
+  try {
+    const user = await pool.query("SELECT email FROM users WHERE id=$1",[req.userId]);
+    const allowed = user.rows.length > 0 && user.rows[0].email.toLowerCase() === adminEmail;
+    return res.json(allowed ? {allowed:true,attempted:app.locals.ranvikTestAttempted === true} : {allowed:false});
+  } catch {
+    return res.status(503).json({success:false,error:"Не удалось проверить доступ к тесту"});
+  }
+});
+
 app.post("/api/admin/ranvik-test", authenticate, async (req, res) => {
   const adminEmail = (process.env.VELORA_ADMIN_EMAIL || "").trim().toLowerCase();
   if (!adminEmail || process.env.VELORA_RANVIK_TEST_ENABLED !== "true") {
@@ -518,6 +534,9 @@ app.post("/api/admin/ranvik-test", authenticate, async (req, res) => {
     const user = await pool.query("SELECT email FROM users WHERE id=$1",[req.userId]);
     if (!user.rows.length || user.rows[0].email.toLowerCase() !== adminEmail) {
       return res.sendStatus(403);
+    }
+    if (req.body?.confirmed !== true) {
+      return res.status(400).json({success:false,error:"Подтвердите запуск платного теста Ranvik"});
     }
     const key = process.env.RANVIK_API_KEY;
     if (!key) return res.status(503).json({success:false,error:"Ключ Ranvik не настроен"});
@@ -580,3 +599,4 @@ const PORT = Number(process.env.PORT) || 3000;
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Velora AI running on port ${PORT}`);
 });
+
