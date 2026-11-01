@@ -26,7 +26,7 @@ footer{text-align:center;padding:30px;color:#999;font-size:13px}
 <div id="authStatus" class="status" role="status" aria-live="polite"></div></section>
 <section id="accountPanel" class="panel hidden"><h2>Личный кабинет</h2><p id="accountEmail" class="muted"></p>
 <span id="credits" class="hidden" aria-hidden="true"></span><p class="note">Все услуги платные. Бесплатные генерации отменены. Приём платежей пока не открыт.</p>
-<button id="logout" class="secondary" type="button">Выйти</button><div id="ranvikTestPanel" class="hidden"><button id="ranvikTestButton" type="button">🧪 Проверить нейросеть</button><div id="ranvikTestStatus" class="status" role="status" aria-live="polite"></div><img id="ranvikTestImage" class="preview" alt="Тестовое изображение Ranvik"></div></section>
+<button id="logout" class="secondary" type="button">Выйти</button><div id="ranvikTestPanel" class="hidden"><button id="ranvikTestButton" type="button">Тест Ranvik</button><div id="ranvikTestStatus" class="status" role="status" aria-live="polite"></div><img id="ranvikTestImage" class="preview" alt="Тестовое изображение Ranvik"></div></section>
 <section class="panel" id="pricingPanel"><h2>Стоимость услуг</h2><p><strong>📸 Генерация фото — 99 ₽</strong></p><p><strong>🎨 Редактирование фото — 149 ₽</strong></p><p><strong>🎬 Генерация видео — 299 ₽</strong></p><p class="note">Оплата через Робокассу появится после активации магазина и проверки интеграции. Сейчас приём платежей отключён.</p></section>
 <section id="studioPanel" class="panel hidden"><h2>ИИ-фотостудия</h2>
 <label for="photo">📸 Загрузи фотографию</label><input type="file" id="photo" accept="image/jpeg,image/png">
@@ -70,7 +70,7 @@ let registering=false,previewUrl=null,latestImage="";
 const styles={real:["Деловая фотосессия","Fashion","Путешествия","Романтика","Кинопортрет","Luxury"],cartoon:["3D-анимация","Аниме","Мультяшный 3D-портрет","Рисованная иллюстрация","Сказочный персонаж","Романтический мультфильм"]};
 function updateStyles(){ $("style").replaceChildren(...styles[$("mode").value].map(s=>new Option(s,s))) }
 $("mode").addEventListener("change",updateStyles);updateStyles();
-function showAccount(on){$("authPanel").classList.toggle("hidden",on);["accountPanel","studioPanel","videoStudioPanel","audioStudioPanel","ordersPanel","resultPanel","historyPanel"].forEach(id=>$(id).classList.toggle("hidden",!on));$("accountEmail").textContent=currentEmail;if(on){renderHistory();loadOrders()}}
+function showAccount(on){$("authPanel").classList.toggle("hidden",on);["accountPanel","studioPanel","videoStudioPanel","audioStudioPanel","ordersPanel","resultPanel","historyPanel"].forEach(id=>$(id).classList.toggle("hidden",!on));$("accountEmail").textContent=currentEmail;updateRanvikAccess(on);if(on){renderHistory();loadOrders()}}
 function setAuthMode(){ $("authTitle").textContent=registering?"Регистрация":"Вход в Velora AI";$("authSubmit").textContent=registering?"Зарегистрироваться":"Войти";$("authToggle").textContent=registering?"У меня уже есть аккаунт":"Создать аккаунт";$("authStatus").textContent="" }
 $("authToggle").onclick=()=>{registering=!registering;setAuthMode()};
 async function api(path,options={}){const r=await fetch(API+path,options);const body=await r.json().catch(()=>({}));if(!r.ok)throw new Error(body.error||body.message||"Ошибка сервера ("+r.status+")");return body}
@@ -83,16 +83,55 @@ token=newToken;currentEmail=email;sessionStorage.setItem("velora_token",token);s
 $("credits").textContent=Number.isFinite(Number(data.credits))&&data.credits!==undefined?data.credits:(data.user?.credits??"—");
 showAccount(true);$("password").value="";
 }catch(e){$("authStatus").textContent=e.message}finally{$("authSubmit").disabled=false}};
-// Test button is displayed to the signed-in account, but authorization is enforced on the server.
-$("ranvikTestPanel").classList.remove("hidden");
-$("ranvikTestButton").onclick=async()=>{
-  const btn=$("ranvikTestButton");btn.disabled=true;
-  $("ranvikTestStatus").textContent="Проверяем Ranvik. Возможен расход баланса на одно изображение...";
+// Capabilities come from the server; never infer admin rights from browser storage.
+let ranvikAccessVersion=0,ranvikAllowed=false,ranvikBusy=false;
+async function updateRanvikAccess(on){
+  const version=++ranvikAccessVersion;
+  ranvikAllowed=false;
+  $("ranvikTestPanel").classList.add("hidden");
+  $("ranvikTestStatus").textContent="";
+  $("ranvikTestImage").removeAttribute("src");
+  $("ranvikTestImage").style.display="none";
+  if(!on)return;
+  const sessionToken=token;
   try{
-    const data=await api("/api/admin/ranvik-test",{method:"POST",headers:{"Authorization":"Bearer "+token}});
+    const access=await api("/api/admin/ranvik-test",{headers:{"Authorization":"Bearer "+sessionToken}});
+    if(version!==ranvikAccessVersion||token!==sessionToken)return;
+    ranvikAllowed=access.allowed===true;
+    $("ranvikTestPanel").classList.toggle("hidden",!ranvikAllowed);
+    $("ranvikTestButton").disabled=ranvikBusy||access.attempted===true;
+    if(access.attempted)$("ranvikTestStatus").textContent="Тест уже запускался. Проверьте результат перед повторным запуском.";
+  }catch{ /* Keep admin controls hidden if access cannot be verified. */ }
+}
+$("ranvikTestButton").onclick=async()=>{
+  if(!ranvikAllowed||ranvikBusy||$("ranvikTestButton").disabled)return;
+  if(!window.confirm("Запустить платный тест Ranvik? Будет отправлен запрос на одно тестовое изображение. С баланса Ranvik могут списаться средства по тарифу провайдера. Продолжить?"))return;
+  const btn=$("ranvikTestButton"),sessionToken=token,version=ranvikAccessVersion;
+  ranvikBusy=true;btn.disabled=true;
+  $("ranvikTestImage").removeAttribute("src");$("ranvikTestImage").style.display="none";
+  $("ranvikTestStatus").textContent="Ranvik создаёт тестовое изображение. Дождитесь ответа…";
+  try{
+    const data=await api("/api/admin/ranvik-test",{method:"POST",headers:{"Authorization":"Bearer "+sessionToken,"Content-Type":"application/json"},body:JSON.stringify({confirmed:true})});
+    if(version!==ranvikAccessVersion||token!==sessionToken)return;
+    if(typeof data.image!=="string"||!(/^https:\/\//.test(data.image)||/^data:image\/(png|jpeg|webp);base64,/.test(data.image)))throw new Error("Ответ получен без корректного изображения. Проверьте результат в Ranvik.");
     $("ranvikTestImage").src=data.image;$("ranvikTestImage").style.display="block";
     $("ranvikTestStatus").textContent="Готово! Ranvik создал тестовое изображение.";
-  }catch(e){$("ranvikTestStatus").textContent=e.message}
+  }catch(e){
+    if(version===ranvikAccessVersion&&token===sessionToken)$("ranvikTestStatus").textContent=e.message+" Автоматического повтора нет.";
+  }finally{
+    ranvikBusy=false;
+    // Recheck the server lock without creating another chargeable request.
+    if(version===ranvikAccessVersion&&token===sessionToken){
+      try{
+        const access=await api("/api/admin/ranvik-test",{headers:{"Authorization":"Bearer "+sessionToken}});
+        if(version===ranvikAccessVersion&&token===sessionToken){
+          ranvikAllowed=access.allowed===true;
+          $("ranvikTestPanel").classList.toggle("hidden",!ranvikAllowed);
+          btn.disabled=!ranvikAllowed||access.attempted!==false;
+        }
+      }catch{btn.disabled=true;}
+    }
+  }
 };
 $("logout").onclick=()=>{token="";currentEmail="";sessionStorage.removeItem("velora_token");sessionStorage.removeItem("velora_email");$("credits").textContent="—";showAccount(false)};
 $("photo").onchange=()=>{if(previewUrl)URL.revokeObjectURL(previewUrl);$("preview").style.display="none";const f=$("photo").files[0];if(!f)return;if(!["image/jpeg","image/png"].includes(f.type)||f.size>8*1024*1024){$("status").textContent="Нужен JPEG/PNG не больше 8 МБ";$("photo").value="";return}previewUrl=URL.createObjectURL(f);$("preview").src=previewUrl;$("preview").style.display="block";$("status").textContent="Фото загружено"};
