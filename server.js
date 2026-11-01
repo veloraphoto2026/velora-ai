@@ -422,6 +422,9 @@ app.post("/api/payments/robokassa/result", express.urlencoded({extended:false,li
       console.info("Robokassa TEST notification verified for order", InvId);
       return res.type("text/plain").send("OK" + InvId);
     }
+    // Never credit a real payment before merchant activation and fiscalization are verified.
+    // Explicit production opt-in is required; test callbacks remain available.
+    if (process.env.ROBOKASSA_LIVE_ENABLED !== "true") return res.sendStatus(503);
     const result = await pool.query(
       `UPDATE orders SET status='paid', paid_at=NOW(), updated_at=NOW()
        WHERE id=$1 AND amount_kopecks=$2 AND currency='RUB' AND status='pending'
