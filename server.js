@@ -6,6 +6,7 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const path = require("path");
 const storage = require("./storage");
+async function storeMedia(orderId,kind,value){if(!storage.configured)return value;try{return (await storage.save(orderId,kind,value))||value}catch(error){console.error("Media archive failed for order",orderId,error?.message);return value}}
 
 const app = express();
 
@@ -513,7 +514,7 @@ app.post("/api/orders/:id/generate-photo", authenticate, async (req, res) => {
     await pool.query(
       `INSERT INTO order_results (order_id, image_data) VALUES ($1,$2)
        ON CONFLICT (order_id) DO NOTHING`,
-      [req.params.id, (await storage.save(req.params.id,"photo",image))||image]
+      [req.params.id, await storeMedia(req.params.id,"photo",image)]
     );
     await pool.query("UPDATE orders SET status='completed', updated_at=NOW() WHERE id=$1 AND status='processing'",[req.params.id]);
     return res.json({success:true,orderId:req.params.id,image:await storage.resolve((await pool.query("SELECT image_data FROM order_results WHERE order_id=$1",[req.params.id])).rows[0].image_data)});
@@ -596,7 +597,7 @@ app.get("/api/orders/:id/video-status",authenticate,async(req,res)=>{
     if(!response.ok)return res.status(502).json({success:false,error:"Статус временно недоступен"});
     const data=await response.json();
     if(data.status==="completed"&&typeof data.url==="string"&&data.url.startsWith("https://")){
-      await pool.query(`INSERT INTO order_results(order_id,image_data) VALUES ($1,$2) ON CONFLICT(order_id) DO NOTHING`,[req.params.id,(await storage.save(req.params.id,"video",data.url))||data.url]);
+      await pool.query(`INSERT INTO order_results(order_id,image_data) VALUES ($1,$2) ON CONFLICT(order_id) DO NOTHING`,[req.params.id,await storeMedia(req.params.id,"video",data.url)]);
       await pool.query(`UPDATE orders SET status='completed',updated_at=NOW() WHERE id=$1 AND user_id=$2 AND status='processing'`,[req.params.id,req.userId]);
       return res.json({success:true,status:"completed"});
     }
