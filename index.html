@@ -181,6 +181,22 @@ latestImage=data.image;$("result").src=latestImage;$("result").style.display="bl
 }catch(e){$("status").textContent=e.message;try{const me=await api("/api/me",{headers:{"Authorization":"Bearer "+token}});$("credits").textContent=me.user.credits}catch{}}
 finally{btn.disabled=false}
 };
-$("download").onclick=()=>{if(!latestImage)return;window.open(latestImage,"_blank","noopener,noreferrer")};
+$("download").onclick=async()=>{
+ if(!latestImage)return;
+ const button=$("download"),oldLabel=button.textContent;button.disabled=true;button.textContent="Готовим файл…";
+ try{
+   if(latestImage.startsWith("data:image/")){
+     const a=document.createElement("a");a.href=latestImage;a.download="velora-photo.png";document.body.appendChild(a);a.click();a.remove();
+   }else{
+     // External provider URLs may block CORS; open as fallback on iPhone.
+     const response=await fetch(latestImage);
+     if(!response.ok)throw new Error("Недоступно");
+     const blob=await response.blob(),url=URL.createObjectURL(blob);
+     const a=document.createElement("a");a.href=url;a.download="velora-photo."+(blob.type==="image/jpeg"?"jpg":"png");document.body.appendChild(a);a.click();a.remove();
+     setTimeout(()=>URL.revokeObjectURL(url),60000);
+   }
+ }catch{window.open(latestImage,"_blank","noopener,noreferrer")}
+ finally{button.disabled=false;button.textContent=oldLabel}
+};
 if(token&&currentEmail){api("/api/me",{headers:{"Authorization":"Bearer "+token}}).then(data=>{currentEmail=data.user.email;sessionStorage.setItem("velora_email",currentEmail);$("credits").textContent=data.user.credits;showAccount(true)}).catch(()=>{$("logout").click()})}else{showAccount(false)}
 </script></body></html>
