@@ -5,6 +5,7 @@ const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const path = require("path");
+const storage = require("./storage");
 
 const app = express();
 
@@ -512,10 +513,10 @@ app.post("/api/orders/:id/generate-photo", authenticate, async (req, res) => {
     await pool.query(
       `INSERT INTO order_results (order_id, image_data) VALUES ($1,$2)
        ON CONFLICT (order_id) DO NOTHING`,
-      [req.params.id, image]
+      [req.params.id, (await storage.save(req.params.id,"photo",image))||image]
     );
     await pool.query("UPDATE orders SET status='completed', updated_at=NOW() WHERE id=$1 AND status='processing'",[req.params.id]);
-    return res.json({success:true,orderId:req.params.id,image});
+    return res.json({success:true,orderId:req.params.id,image:await storage.resolve((await pool.query("SELECT image_data FROM order_results WHERE order_id=$1",[req.params.id])).rows[0].image_data)});
   } catch (err) {
     console.error("Paid image generation error:",err?.message);
     return res.status(503).json({success:false,error:"Ошибка генерации. Обратитесь в поддержку с номером заказа."});
@@ -535,7 +536,7 @@ app.get("/api/orders/:id/result", authenticate, async (req, res) => {
       [req.params.id, req.userId]
     );
     if (!result.rows.length) return res.status(404).json({success:false,error:"Готовый результат не найден"});
-    return res.json({success:true,orderId:req.params.id,image:result.rows[0].image_data});
+    return res.json({success:true,orderId:req.params.id,image:await storage.resolve(result.rows[0].image_data)});
   } catch (error) {
     console.error("Order result retrieval error:",error?.message);
     return res.status(503).json({success:false,error:"Результат временно недоступен"});
@@ -577,8 +578,8 @@ app.get("/api/orders/:id/video-result",authenticate,async(req,res)=>{
     const q=await pool.query(`SELECT r.image_data AS video FROM order_results r JOIN orders o ON o.id=r.order_id WHERE o.id=$1 AND o.user_id=$2 AND o.service='video' AND o.status='completed'`,[req.params.id,req.userId]);
     if(!q.rowCount)return res.status(404).json({success:false,error:"Готовое видео не найдено"});
     const video=q.rows[0].video;
-    if(typeof video!=="string"||!video.startsWith("https://"))return res.status(503).json({success:false,error:"Некорректная ссылка видео"});
-    return res.json({success:true,video});
+    if(typeof video!=="string"||!(video.startsWith("https://")||video.startsWith("yc-s3:")))return res.status(503).json({success:false,error:"Некорректная ссылка видео"});
+    return res.json({success:true,video:await storage.resolve(video)});
   }catch(e){console.error("Video result error",e?.message);return res.status(503).json({success:false,error:"Видео временно недоступно"})}
 });
 
@@ -595,7 +596,7 @@ app.get("/api/orders/:id/video-status",authenticate,async(req,res)=>{
     if(!response.ok)return res.status(502).json({success:false,error:"Статус временно недоступен"});
     const data=await response.json();
     if(data.status==="completed"&&typeof data.url==="string"&&data.url.startsWith("https://")){
-      await pool.query(`INSERT INTO order_results(order_id,image_data) VALUES ($1,$2) ON CONFLICT(order_id) DO NOTHING`,[req.params.id,data.url]);
+      await pool.query(`INSERT INTO order_results(order_id,image_data) VALUES ($1,$2) ON CONFLICT(order_id) DO NOTHING`,[req.params.id,(await storage.save(req.params.id,"video",data.url))||data.url]);
       await pool.query(`UPDATE orders SET status='completed',updated_at=NOW() WHERE id=$1 AND user_id=$2 AND status='processing'`,[req.params.id,req.userId]);
       return res.json({success:true,status:"completed"});
     }
