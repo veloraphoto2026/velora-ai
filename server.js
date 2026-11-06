@@ -290,6 +290,11 @@ async function initOrders() {
 const ordersReady = databaseReady.then(async ready => {
   if (!ready) return false;
   await initOrders();
+  await pool.query(`CREATE TABLE IF NOT EXISTS order_results (
+    order_id BIGINT PRIMARY KEY REFERENCES orders(id),
+    image_data TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
   return true;
 }).catch(error => { console.error("Order table initialization failed:", error); return false; });
 
@@ -501,11 +506,38 @@ app.post("/api/orders/:id/generate-photo", authenticate, async (req, res) => {
       console.error("Unexpected Ranvik response shape for order",req.params.id);
       return res.status(502).json({success:false,error:"Нестандартный ответ Ranvik. Заказ отправлен на проверку."});
     }
+    // Persist before completing: customers can retrieve results after reloading.
+    // Store provider URLs or base64 images privately, never in public static files.
+    await pool.query(
+      `INSERT INTO order_results (order_id, image_data) VALUES ($1,$2)
+       ON CONFLICT (order_id) DO NOTHING`,
+      [req.params.id, image]
+    );
     await pool.query("UPDATE orders SET status='completed', updated_at=NOW() WHERE id=$1 AND status='processing'",[req.params.id]);
     return res.json({success:true,orderId:req.params.id,image});
   } catch (err) {
     console.error("Paid image generation error:",err?.message);
     return res.status(503).json({success:false,error:"Ошибка генерации. Обратитесь в поддержку с номером заказа."});
+  }
+});
+
+// Authenticated customer retrieval; ownership is enforced in the SQL query.
+app.get("/api/orders/:id/result", authenticate, async (req, res) => {
+  if (!/^[1-9][0-9]*$/.test(req.params.id)) return res.status(400).json({success:false,error:"Некорректный заказ"});
+  res.set("Cache-Control", "private, no-store");
+  try {
+    if (!(await ordersReady)) return res.status(503).json({success:false,error:"Заказы недоступны"});
+    const result = await pool.query(
+      `SELECT r.image_data FROM order_results r
+       JOIN orders o ON o.id=r.order_id
+       WHERE o.id=$1 AND o.user_id=$2 AND o.status='completed'`,
+      [req.params.id, req.userId]
+    );
+    if (!result.rows.length) return res.status(404).json({success:false,error:"Готовый результат не найден"});
+    return res.json({success:true,orderId:req.params.id,image:result.rows[0].image_data});
+  } catch (error) {
+    console.error("Order result retrieval error:",error?.message);
+    return res.status(503).json({success:false,error:"Результат временно недоступен"});
   }
 });
 
