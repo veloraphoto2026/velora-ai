@@ -1,0 +1,40 @@
+name: Velora safe checks
+on:
+  pull_request:
+  push:
+    branches: [velora-launch-preparation-20261106]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: JavaScript server syntax
+        run: node --check server.js
+      - name: Browser script syntax
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          const html=fs.readFileSync('index.html','utf8');
+          const scripts=[...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)];
+          if(!scripts.length)throw new Error('No inline scripts');
+          for(const [,source] of scripts)new (require('vm').Script)(source);
+          console.log('Browser scripts parsed:',scripts.length);
+          NODE
+      - name: Launch safeguards
+        run: |
+          node - <<'NODE'
+          const fs=require('fs'),assert=require('assert');
+          const server=fs.readFileSync('server.js','utf8');
+          const html=fs.readFileSync('index.html','utf8');
+          assert(server.includes('paymentsEnabled:false'));
+          assert(server.includes('generationEnabled:false'));
+          assert(server.includes("process.env.VELORA_VIDEO_ENABLED!==\"true\""));
+          assert(server.includes("status='paid'"));
+          assert(server.includes("o.user_id=$2"));
+          assert(html.includes('id="textStudioPanel"'));
+          assert(html.includes('"/api/orders/"+encodeURIComponent(o.id)+"/result"'));
+          console.log('Launch safeguards present');
+          NODE
