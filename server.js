@@ -290,6 +290,12 @@ async function initOrders() {
 const ordersReady = databaseReady.then(async ready => {
   if (!ready) return false;
   await initOrders();
+  await pool.query(`CREATE TABLE IF NOT EXISTS provider_tasks (order_id BIGINT PRIMARY KEY REFERENCES orders(id),provider_task_id TEXT NOT NULL,kind TEXT NOT NULL,created_at TIMESTAMPTZ DEFAULT NOW())`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS order_results (
+    order_id BIGINT PRIMARY KEY REFERENCES orders(id),
+    image_data TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
   return true;
 }).catch(error => { console.error("Order table initialization failed:", error); return false; });
 
@@ -501,12 +507,100 @@ app.post("/api/orders/:id/generate-photo", authenticate, async (req, res) => {
       console.error("Unexpected Ranvik response shape for order",req.params.id);
       return res.status(502).json({success:false,error:"Нестандартный ответ Ranvik. Заказ отправлен на проверку."});
     }
+    // Persist before completing: customers can retrieve results after reloading.
+    // Store provider URLs or base64 images privately, never in public static files.
+    await pool.query(
+      `INSERT INTO order_results (order_id, image_data) VALUES ($1,$2)
+       ON CONFLICT (order_id) DO NOTHING`,
+      [req.params.id, image]
+    );
     await pool.query("UPDATE orders SET status='completed', updated_at=NOW() WHERE id=$1 AND status='processing'",[req.params.id]);
     return res.json({success:true,orderId:req.params.id,image});
   } catch (err) {
     console.error("Paid image generation error:",err?.message);
     return res.status(503).json({success:false,error:"Ошибка генерации. Обратитесь в поддержку с номером заказа."});
   }
+});
+
+// Authenticated customer retrieval; ownership is enforced in the SQL query.
+app.get("/api/orders/:id/result", authenticate, async (req, res) => {
+  if (!/^[1-9][0-9]*$/.test(req.params.id)) return res.status(400).json({success:false,error:"Некорректный заказ"});
+  res.set("Cache-Control", "private, no-store");
+  try {
+    if (!(await ordersReady)) return res.status(503).json({success:false,error:"Заказы недоступны"});
+    const result = await pool.query(
+      `SELECT r.image_data FROM order_results r
+       JOIN orders o ON o.id=r.order_id
+       WHERE o.id=$1 AND o.user_id=$2 AND o.status='completed'`,
+      [req.params.id, req.userId]
+    );
+    if (!result.rows.length) return res.status(404).json({success:false,error:"Готовый результат не найден"});
+    return res.json({success:true,orderId:req.params.id,image:result.rows[0].image_data});
+  } catch (error) {
+    console.error("Order result retrieval error:",error?.message);
+    return res.status(503).json({success:false,error:"Результат временно недоступен"});
+  }
+});
+
+// Video tasks use Ranvik's documented asynchronous API. Disabled until reviewed and enabled.
+// The paid order is atomically claimed before a provider call, preventing duplicate charges.
+app.post("/api/orders/:id/generate-video", authenticate, async (req,res)=>{
+  if(!/^[1-9][0-9]*$/.test(req.params.id))return res.status(400).json({success:false,error:"Некорректный заказ"});
+  const prompt=req.body?.prompt, image=req.body?.image;
+  if(typeof prompt!=="string"||prompt.trim().length<5||prompt.length>2000)return res.status(400).json({success:false,error:"Опишите видео (5–2000 символов)"});
+  if(image!==undefined&&(typeof image!=="string"||!(image.startsWith("https://")||/^data:image\/(jpeg|png);base64,[A-Za-z0-9+/]+={0,2}$/.test(image))||image.length>11*1024*1024))return res.status(400).json({success:false,error:"Неверное изображение"});
+  if(process.env.VELORA_VIDEO_ENABLED!=="true")return res.status(503).json({success:false,error:"Видео ещё не включено"});
+  const key=process.env.RANVIK_API_KEY;
+  if(!key)return res.status(503).json({success:false,error:"Ranvik не настроен"});
+  try{
+    if(!(await ordersReady))return res.status(503).json({success:false,error:"Заказы недоступны"});
+    const claim=await pool.query(`UPDATE orders SET status='processing',updated_at=NOW() WHERE id=$1 AND user_id=$2 AND service='video' AND status='paid' RETURNING id`,[req.params.id,req.userId]);
+    if(!claim.rowCount)return res.status(409).json({success:false,error:"Нужен оплаченный заказ видео"});
+    const response=await fetch("https://api.ranvik.ru/v1/videos/generations",{
+      method:"POST",headers:{"Authorization":"Bearer "+key,"Content-Type":"application/json"},
+      body:JSON.stringify({model:process.env.RANVIK_VIDEO_MODEL||"veo-31",prompt:prompt.trim(),duration:5,aspectRatio:"9:16",...(image?{image}:{})}),
+      signal:AbortSignal.timeout(30000)
+    });
+    if(!response.ok){console.error("Ranvik video HTTP",response.status);return res.status(502).json({success:false,error:"Видео отправлено на проверку; не повторяйте запрос"})}
+    const data=await response.json().catch(()=>null);
+    if(typeof data?.id!=="string"||!/^task_[a-zA-Z0-9_-]+$/.test(data.id))return res.status(502).json({success:false,error:"Нестандартный ответ Ranvik; не повторяйте запрос"});
+    await pool.query(`INSERT INTO provider_tasks (order_id,provider_task_id,kind) VALUES ($1,$2,'video') ON CONFLICT (order_id) DO NOTHING`,[req.params.id,data.id]);
+    return res.status(202).json({success:true,orderId:req.params.id,status:"processing"});
+  }catch(e){console.error("Video generation error",e?.message);return res.status(503).json({success:false,error:"Видео требует проверки; повторная отправка заблокирована"})}
+});
+// A completed video is returned only to its owning customer.
+app.get("/api/orders/:id/video-result",authenticate,async(req,res)=>{
+  if(!/^[1-9][0-9]*$/.test(req.params.id))return res.status(400).json({success:false,error:"Некорректный заказ"});
+  res.set("Cache-Control","private, no-store");
+  try{
+    if(!(await ordersReady))return res.status(503).json({success:false,error:"Заказы недоступны"});
+    const q=await pool.query(`SELECT r.image_data AS video FROM order_results r JOIN orders o ON o.id=r.order_id WHERE o.id=$1 AND o.user_id=$2 AND o.service='video' AND o.status='completed'`,[req.params.id,req.userId]);
+    if(!q.rowCount)return res.status(404).json({success:false,error:"Готовое видео не найдено"});
+    const video=q.rows[0].video;
+    if(typeof video!=="string"||!video.startsWith("https://"))return res.status(503).json({success:false,error:"Некорректная ссылка видео"});
+    return res.json({success:true,video});
+  }catch(e){console.error("Video result error",e?.message);return res.status(503).json({success:false,error:"Видео временно недоступно"})}
+});
+
+app.get("/api/orders/:id/video-status",authenticate,async(req,res)=>{
+  if(!/^[1-9][0-9]*$/.test(req.params.id))return res.status(400).json({success:false,error:"Некорректный заказ"});
+  res.set("Cache-Control","private, no-store");
+  try{
+    if(!(await ordersReady))return res.status(503).json({success:false,error:"Заказы недоступны"});
+    const q=await pool.query(`SELECT t.provider_task_id,o.status FROM provider_tasks t JOIN orders o ON o.id=t.order_id WHERE o.id=$1 AND o.user_id=$2 AND o.service='video'`,[req.params.id,req.userId]);
+    if(!q.rowCount)return res.status(404).json({success:false,error:"Видеозадача не найдена"});
+    if(q.rows[0].status==="completed")return res.json({success:true,status:"completed"});
+    const key=process.env.RANVIK_API_KEY;if(!key)return res.status(503).json({success:false,error:"Ranvik не настроен"});
+    const response=await fetch("https://api.ranvik.ru/v1/videos/generations?task_id="+encodeURIComponent(q.rows[0].provider_task_id),{headers:{"Authorization":"Bearer "+key},signal:AbortSignal.timeout(20000)});
+    if(!response.ok)return res.status(502).json({success:false,error:"Статус временно недоступен"});
+    const data=await response.json();
+    if(data.status==="completed"&&typeof data.url==="string"&&data.url.startsWith("https://")){
+      await pool.query(`INSERT INTO order_results(order_id,image_data) VALUES ($1,$2) ON CONFLICT(order_id) DO NOTHING`,[req.params.id,data.url]);
+      await pool.query(`UPDATE orders SET status='completed',updated_at=NOW() WHERE id=$1 AND user_id=$2 AND status='processing'`,[req.params.id,req.userId]);
+      return res.json({success:true,status:"completed"});
+    }
+    return res.json({success:true,status:["queued","processing","failed"].includes(data.status)?data.status:"processing"});
+  }catch(e){console.error("Video status error",e?.message);return res.status(503).json({success:false,error:"Не удалось проверить видео"})}
 });
 
 // One-time administrator-only Ranvik connectivity test.
