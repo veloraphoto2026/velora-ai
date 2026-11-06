@@ -568,6 +568,20 @@ app.post("/api/orders/:id/generate-video", authenticate, async (req,res)=>{
     return res.status(202).json({success:true,orderId:req.params.id,status:"processing"});
   }catch(e){console.error("Video generation error",e?.message);return res.status(503).json({success:false,error:"Видео требует проверки; повторная отправка заблокирована"})}
 });
+// A completed video is returned only to its owning customer.
+app.get("/api/orders/:id/video-result",authenticate,async(req,res)=>{
+  if(!/^[1-9][0-9]*$/.test(req.params.id))return res.status(400).json({success:false,error:"Некорректный заказ"});
+  res.set("Cache-Control","private, no-store");
+  try{
+    if(!(await ordersReady))return res.status(503).json({success:false,error:"Заказы недоступны"});
+    const q=await pool.query(`SELECT r.image_data AS video FROM order_results r JOIN orders o ON o.id=r.order_id WHERE o.id=$1 AND o.user_id=$2 AND o.service='video' AND o.status='completed'`,[req.params.id,req.userId]);
+    if(!q.rowCount)return res.status(404).json({success:false,error:"Готовое видео не найдено"});
+    const video=q.rows[0].video;
+    if(typeof video!=="string"||!video.startsWith("https://"))return res.status(503).json({success:false,error:"Некорректная ссылка видео"});
+    return res.json({success:true,video});
+  }catch(e){console.error("Video result error",e?.message);return res.status(503).json({success:false,error:"Видео временно недоступно"})}
+});
+
 app.get("/api/orders/:id/video-status",authenticate,async(req,res)=>{
   if(!/^[1-9][0-9]*$/.test(req.params.id))return res.status(400).json({success:false,error:"Некорректный заказ"});
   res.set("Cache-Control","private, no-store");
