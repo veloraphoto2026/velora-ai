@@ -1,3 +1,4 @@
+require("dotenv").config();
 const crypto = require("crypto");
 const express = require("express");
 const cors = require("cors");
@@ -14,10 +15,14 @@ app.use(express.json({ limit: "15mb" }));
 
 // DATABASE
 
+const databaseCa = process.env.DATABASE_CA_PEM;
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
+  connectionTimeoutMillis: 5000,
   ssl: process.env.DATABASE_URL
-    ? { rejectUnauthorized: false }
+    ? databaseCa
+      ? { ca: databaseCa.replace(/\\n/g, "\n"), rejectUnauthorized: true }
+      : { rejectUnauthorized: false }
     : undefined
 });
 
@@ -60,12 +65,16 @@ app.get("/oferta.html", (req, res) => {
 
 // HEALTH CHECK
 
-app.get("/api/health", (req, res) => {
-  res.json({
-    success: true,
-    service: "Velora AI",
-    status: "running"
-  });
+app.get("/api/health", async (_req, res) => {
+  try {
+    if (await ordersReady) {
+      await pool.query("SELECT 1");
+      return res.json({ success: true, service: "Velora AI", status: "running" });
+    }
+  } catch (error) {
+    console.error("Database health check failed:", error.code || error.name);
+  }
+  return res.status(503).json({ success: false, service: "Velora AI", status: "database_unavailable" });
 });
 
 // REGISTER
