@@ -604,18 +604,31 @@ app.get("/api/orders/:id/video-status",authenticate,async(req,res)=>{
 });
 
 // One-time administrator-only Ranvik connectivity test.
-// Requires a dedicated admin email and explicit opt-in in server environment.
-// No public or unpaid customer can invoke this endpoint.
+// Requires a verified account ID, its email, and explicit opt-in in server environment.
+function ranvikTestAdmin() {
+  const id = process.env.VELORA_ADMIN_USER_ID?.trim();
+  const email = process.env.VELORA_ADMIN_EMAIL?.trim().toLowerCase();
+  if (process.env.VELORA_RANVIK_TEST_ENABLED !== "true" || !id || !/^[1-9]\d*$/.test(id) || !email) {
+    return null;
+  }
+  return { id, email };
+}
+
+async function isRanvikTestAdmin(userId, admin) {
+  if (String(userId) !== admin.id) return false;
+  const user = await pool.query("SELECT email FROM users WHERE id=$1", [userId]);
+  return user.rows[0]?.email.toLowerCase() === admin.email;
+}
+
 // Read-only capability check: never calls Ranvik or changes orders/balances.
 app.get("/api/admin/ranvik-test", authenticate, async (req, res) => {
   res.set("Cache-Control", "no-store");
-  const adminEmail = (process.env.VELORA_ADMIN_EMAIL || "").trim().toLowerCase();
-  if (!adminEmail || process.env.VELORA_RANVIK_TEST_ENABLED !== "true") {
+  const admin = ranvikTestAdmin();
+  if (!admin) {
     return res.json({allowed:false});
   }
   try {
-    const user = await pool.query("SELECT email FROM users WHERE id=$1",[req.userId]);
-    const allowed = user.rows.length > 0 && user.rows[0].email.toLowerCase() === adminEmail;
+    const allowed = await isRanvikTestAdmin(req.userId, admin);
     return res.json(allowed ? {allowed:true,attempted:app.locals.ranvikTestAttempted === true} : {allowed:false});
   } catch {
     return res.status(503).json({success:false,error:"Не удалось проверить доступ к тесту"});
@@ -623,13 +636,12 @@ app.get("/api/admin/ranvik-test", authenticate, async (req, res) => {
 });
 
 app.post("/api/admin/ranvik-test", authenticate, async (req, res) => {
-  const adminEmail = (process.env.VELORA_ADMIN_EMAIL || "").trim().toLowerCase();
-  if (!adminEmail || process.env.VELORA_RANVIK_TEST_ENABLED !== "true") {
+  const admin = ranvikTestAdmin();
+  if (!admin) {
     return res.status(404).json({success:false,error:"Тестирование отключено"});
   }
   try {
-    const user = await pool.query("SELECT email FROM users WHERE id=$1",[req.userId]);
-    if (!user.rows.length || user.rows[0].email.toLowerCase() !== adminEmail) {
+    if (!(await isRanvikTestAdmin(req.userId, admin))) {
       return res.sendStatus(403);
     }
     if (req.body?.confirmed !== true) {
