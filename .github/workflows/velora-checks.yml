@@ -38,3 +38,84 @@ jobs:
           assert(html.includes('"/api/orders/"+encodeURIComponent(o.id)+"/result"'));
           console.log('Launch safeguards present');
           NODE
+      - name: Ranvik admin authorization and confirmation (offline)
+        run: |
+          node - <<'NODE'
+          const assert = require('node:assert/strict');
+          const fs = require('node:fs');
+          const vm = require('node:vm');
+          const routes = new Map();
+          const endpoint = '/api/admin/ranvik-test';
+          const app = { locals: {}, use() {}, listen() {} };
+          for (const method of ['get', 'post']) {
+            app[method] = (path, ...handlers) => routes.set(method + path, handlers);
+          }
+
+          const express = Object.assign(() => app, {
+            json: () => () => {},
+            urlencoded: () => () => {}
+          });
+          const env = {
+            VELORA_ADMIN_EMAIL: 'admin@example.test',
+            VELORA_RANVIK_TEST_ENABLED: 'true',
+            RANVIK_API_KEY: 'offline-placeholder'
+          };
+          let requests = 0;
+          const modules = {
+            express,
+            cors: () => () => {},
+            pg: { Pool: class {
+              async query(sql) {
+                return { rows: sql.startsWith('SELECT email') ? [{ email: env.VELORA_ADMIN_EMAIL }] : [] };
+              }
+            } },
+            jsonwebtoken: { verify: token => ({ userId: token }) },
+            bcryptjs: {}
+          };
+          vm.runInNewContext(fs.readFileSync('server.js', 'utf8'), {
+            require: name => modules[name] ?? require(name),
+            process: { env },
+            AbortSignal,
+            fetch: async () => {
+              requests++;
+              return { ok: true, json: async () => ({ image: 'https://example.test/image.png' }) };
+            },
+            console
+          });
+
+          async function request(method, userId, confirmed) {
+            const [auth, handler] = routes.get(method + endpoint);
+            const headers = userId ? { authorization: 'Bearer ' + userId } : {};
+            const req = { headers, body: { confirmed } };
+            const result = { status: 200 };
+            const res = {
+              set() {},
+              status(code) { result.status = code; return this; },
+              sendStatus(code) { return this.status(code); },
+              json(body) { result.body = body; return this; }
+            };
+            let handled;
+            auth(req, res, () => { handled = handler(req, res); });
+            await handled;
+            return result;
+          }
+
+          (async () => {
+            assert.equal((await request('get')).status, 401);
+            assert.equal((await request('post')).status, 401);
+            assert.equal((await request('get', '7')).body.allowed, false);
+            assert.equal((await request('post', '7', true)).status, 404);
+
+            env.VELORA_ADMIN_USER_ID = '7';
+            assert.equal((await request('get', '8')).body.allowed, false);
+            assert.equal((await request('post', '8', true)).status, 403);
+            assert.equal((await request('get', '7')).body.allowed, true);
+            assert.equal((await request('post', '7', 'true')).status, 400);
+            assert.equal(requests, 0);
+
+            const results = await Promise.all([request('post', '7', true), request('post', '7', true)]);
+            assert.deepEqual(results.map(result => result.status).sort(), [200, 429]);
+            assert.equal(requests, 1);
+            assert.equal((await request('get', '7')).body.attempted, true);
+          })().catch(error => { console.error(error); process.exitCode = 1; });
+          NODE
